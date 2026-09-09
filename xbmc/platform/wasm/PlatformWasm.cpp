@@ -10,6 +10,7 @@
 
 #include "ServiceBroker.h"
 #include "cores/AudioEngine/Sinks/AESinkWasmAudioWorklet.h"
+#include "filesystem/SpecialProtocol.h"
 #include "messaging/ApplicationMessenger.h"
 #include "windowing/wasm/WinSystemWasmGLESContext.h"
 
@@ -39,6 +40,9 @@ bool CPlatformWasm::InitStageOne()
 
   if (!CPlatformPosix::InitStageOne())
     return false;
+
+  setenv("SSL_CERT_FILE",
+         CSpecialProtocol::TranslatePath("special://xbmc/system/certs/cacert.pem").c_str(), 0);
 
   CWinSystemWasmGLESContext::Register();
   CAESinkWasmAudioWorklet::Register();

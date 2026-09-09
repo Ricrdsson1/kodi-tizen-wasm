@@ -62,6 +62,9 @@
 #include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
 #include "utils/log.h"
+#if defined(TARGET_WASM)
+#include "platform/wasm/network/TizenSockets.h"
+#endif
 
 #ifdef TARGET_POSIX
 #include "platform/posix/filesystem/PosixDirectory.h"
@@ -212,7 +215,7 @@ IDirectory* CDirectoryFactory::Create(const CURL& url)
 #endif
 
 #if defined(TARGET_WASM)
-  const bool curlUsable = false;
+  const bool curlUsable = kodi_wasm_has_sockets();
 #else
   const bool curlUsable = true;
 #endif
