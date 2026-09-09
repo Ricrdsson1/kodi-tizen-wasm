@@ -38,6 +38,8 @@
 #include "ShoutcastFile.h"
 #if defined(TARGET_WASM)
 #include "wasm/XhrFile.h"
+
+#include "platform/wasm/network/TizenSockets.h"
 #endif
 #include "utils/CharsetConverter.h"
 #include "utils/log.h"
@@ -2029,7 +2031,8 @@ std::string CCurlFile::GetInfoString(int infoType)
 bool CCurlFile::GetHttpHeader(const CURL &url, CHttpHeader &headers)
 {
 #if defined(TARGET_WASM)
-  return CXhrFile::GetHttpHeader(url, headers);
+  if (!kodi_wasm_has_sockets())
+    return CXhrFile::GetHttpHeader(url, headers);
 #endif
   try
   {
@@ -2057,7 +2060,8 @@ bool CCurlFile::GetHttpHeader(const CURL &url, CHttpHeader &headers)
 bool CCurlFile::GetMimeType(const CURL &url, std::string &content, const std::string &useragent)
 {
 #if defined(TARGET_WASM)
-  return CXhrFile::GetMimeType(url, content, useragent);
+  if (!kodi_wasm_has_sockets())
+    return CXhrFile::GetMimeType(url, content, useragent);
 #endif
   CCurlFile file;
   if (!useragent.empty())
@@ -2087,7 +2091,8 @@ bool CCurlFile::GetMimeType(const CURL &url, std::string &content, const std::st
 bool CCurlFile::GetContentType(const CURL &url, std::string &content, const std::string &useragent)
 {
 #if defined(TARGET_WASM)
-  return CXhrFile::GetContentType(url, content, useragent);
+  if (!kodi_wasm_has_sockets())
+    return CXhrFile::GetContentType(url, content, useragent);
 #endif
   CCurlFile file;
   if (!useragent.empty())

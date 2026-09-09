@@ -12,6 +12,8 @@
 
 #if defined(TARGET_WASM)
 #include "wasm/XhrHttpClient.h"
+
+#include "platform/wasm/network/TizenSockets.h"
 #endif
 
 using namespace XFILE;
@@ -19,8 +21,8 @@ using namespace XFILE;
 std::unique_ptr<IHttpClient> XFILE::CreateHttpClient()
 {
 #if defined(TARGET_WASM)
-  return std::make_unique<CXhrHttpClient>();
-#else
-  return std::make_unique<CCurlHttpClient>();
+  if (!kodi_wasm_has_sockets())
+    return std::make_unique<CXhrHttpClient>();
 #endif
+  return std::make_unique<CCurlHttpClient>();
 }

@@ -21,6 +21,8 @@
 #include "ShoutcastFile.h"
 #if defined(TARGET_WASM)
 #include "wasm/XhrFile.h"
+
+#include "platform/wasm/network/TizenSockets.h"
 #endif
 #ifdef HAS_FILESYSTEM_SMB
 #ifdef TARGET_WINDOWS
@@ -158,9 +160,9 @@ IFile* CFileFactory::CreateLoader(const CURL& url)
 #endif
 
 #if defined(TARGET_WASM)
-  // libcurl needs BSD sockets, which browsers do not provide.
-  const bool curlUsable = false;
-  if (url.IsProtocol("http") || url.IsProtocol("https"))
+  // libcurl needs BSD sockets, which only the Tizen runtime provides.
+  const bool curlUsable = kodi_wasm_has_sockets();
+  if (!curlUsable && (url.IsProtocol("http") || url.IsProtocol("https")))
     return new CXhrFile();
 #else
   const bool curlUsable = true;
