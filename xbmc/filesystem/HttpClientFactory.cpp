@@ -10,12 +10,17 @@
 
 #include "CurlHttpClient.h"
 
+#if defined(TARGET_WASM)
+#include "wasm/XhrHttpClient.h"
+#endif
+
 using namespace XFILE;
 
 std::unique_ptr<IHttpClient> XFILE::CreateHttpClient()
 {
-  // Curl is the only HTTP backend currently available. The WASM platform,
-  // where libcurl is not usable, will hook its own IHttpClient implementation
-  // in here so that scraper and metadata consumers stay backend-agnostic.
+#if defined(TARGET_WASM)
+  return std::make_unique<CXhrHttpClient>();
+#else
   return std::make_unique<CCurlHttpClient>();
+#endif
 }
