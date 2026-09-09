@@ -36,6 +36,9 @@
 
 #include "DllLibCurl.h"
 #include "ShoutcastFile.h"
+#if defined(TARGET_WASM)
+#include "wasm/XhrFile.h"
+#endif
 #include "utils/CharsetConverter.h"
 #include "utils/log.h"
 #include "utils/StringUtils.h"
@@ -2025,6 +2028,9 @@ std::string CCurlFile::GetInfoString(int infoType)
 /* STATIC FUNCTIONS */
 bool CCurlFile::GetHttpHeader(const CURL &url, CHttpHeader &headers)
 {
+#if defined(TARGET_WASM)
+  return CXhrFile::GetHttpHeader(url, headers);
+#endif
   try
   {
     // Apply any stored credentials (passwords.xml). CFile::Stat() does this for its callers,
@@ -2050,6 +2056,9 @@ bool CCurlFile::GetHttpHeader(const CURL &url, CHttpHeader &headers)
 
 bool CCurlFile::GetMimeType(const CURL &url, std::string &content, const std::string &useragent)
 {
+#if defined(TARGET_WASM)
+  return CXhrFile::GetMimeType(url, content, useragent);
+#endif
   CCurlFile file;
   if (!useragent.empty())
     file.SetUserAgent(useragent);
@@ -2077,6 +2086,9 @@ bool CCurlFile::GetMimeType(const CURL &url, std::string &content, const std::st
 
 bool CCurlFile::GetContentType(const CURL &url, std::string &content, const std::string &useragent)
 {
+#if defined(TARGET_WASM)
+  return CXhrFile::GetContentType(url, content, useragent);
+#endif
   CCurlFile file;
   if (!useragent.empty())
     file.SetUserAgent(useragent);
