@@ -8,7 +8,7 @@
 
 #include "HTTPDirectory.h"
 
-#include "CurlFile.h"
+#include "File.h"
 #include "FileItem.h"
 #include "FileItemList.h"
 #include "ServiceBroker.h"
@@ -32,7 +32,7 @@ CHTTPDirectory::~CHTTPDirectory(void) = default;
 
 bool CHTTPDirectory::GetDirectory(const CURL& url, CFileItemList &items)
 {
-  CCurlFile http;
+  CFile http;
 
   const std::string& strBasePath = url.GetFileName();
 
@@ -75,11 +75,16 @@ bool CHTTPDirectory::GetDirectory(const CURL& url, CFileItemList &items)
 
   /* read response from server into string buffer */
   std::string strBuffer;
-  if (http.ReadData(strBuffer) && !strBuffer.empty())
+  char buffer[16384];
+  ssize_t read;
+  while ((read = http.Read(buffer, sizeof(buffer))) > 0)
+    strBuffer.append(buffer, read);
+  if (!strBuffer.empty())
   {
     /* if Content-Length is found and its not text/html, URL is pointing to file so don't treat URL as HTTPDirectory */
-    if (!http.GetHttpHeader().GetValue("Content-Length").empty() &&
-        !StringUtils::StartsWithNoCase(http.GetHttpHeader().GetValue("Content-type"), "text/html"))
+    if (!http.GetProperty(XFILE::FileProperty::RESPONSE_HEADER, "Content-Length").empty() &&
+        !StringUtils::StartsWithNoCase(http.GetProperty(XFILE::FileProperty::CONTENT_TYPE),
+                                       "text/html"))
     {
       return false;
     }
@@ -289,9 +294,9 @@ bool CHTTPDirectory::GetDirectory(const CURL& url, CFileItemList &items)
           else
           if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_bHTTPDirectoryStatFilesize) // As a fallback get the size by stat-ing the file (slow)
           {
-            CCurlFile file;
-            file.Open(url);
-            pItem->SetSize(file.GetLength());
+            CFile file;
+            if (file.Open(url))
+              pItem->SetSize(file.GetLength());
             file.Close();
           }
         }
@@ -308,10 +313,9 @@ bool CHTTPDirectory::GetDirectory(const CURL& url, CFileItemList &items)
 
 bool CHTTPDirectory::Exists(const CURL &url)
 {
-  CCurlFile http;
   struct __stat64 buffer;
 
-  if( http.Stat(url, &buffer) != 0 )
+  if (CFile::Stat(url, &buffer) != 0)
   {
     return false;
   }
