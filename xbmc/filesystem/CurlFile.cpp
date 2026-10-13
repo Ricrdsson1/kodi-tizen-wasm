@@ -1923,10 +1923,7 @@ int8_t CCurlFile::CReadState::FillBuffer(unsigned int want)
            */
           if (maxfd == -1)
           {
-#if defined(TARGET_WASM)
-            // There are no sockets to wait on; curl_multi_perform() waits for the browser.
-            rc = 0;
-#elif defined(TARGET_WINDOWS)
+#ifdef TARGET_WINDOWS
             /* Windows does not support using select() for sleeping without a dummy
              * socket. Instead use Windows' Sleep() and sleep for 100ms which is the
              * minimum suggested value in the curl_multi_fdset() doc.
