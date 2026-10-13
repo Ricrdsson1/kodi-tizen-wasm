@@ -3,6 +3,7 @@ set_property(TARGET ${APP_NAME_LC} APPEND PROPERTY LINK_DEPENDS
   ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/kodi_pre.js
   ${CMAKE_SOURCE_DIR}/xbmc/windowing/wasm/webgl_commit.js
   ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/tizen/tizen_emss.js
+  ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/tizen/tizen_drm.js
   ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/network/tizen_sockets.js)
 if(ENABLE_WASM_DEV_PROXY)
   set_property(TARGET ${APP_NAME_LC} APPEND PROPERTY LINK_DEPENDS
@@ -46,11 +47,13 @@ endif()
 # Per add-on:
 #   WASM_STATIC_ADDON_LIBRARIES_<id>    libraries it needs from the depends prefix
 #   WASM_STATIC_ADDON_DEFINITIONS_<id>  compile definitions its own build would set
-#   WASM_STATIC_ADDON_SOURCES_<id>      source globs, relative to its directory
-#                                       (default: everything below src)
+#   WASM_STATIC_ADDON_SOURCES_<id>      source globs, relative to its directory or
+#                                       absolute (default: everything below src)
 #   WASM_STATIC_ADDON_EXCLUDE_<id>      regular expression of sources to leave out
 #   WASM_STATIC_ADDON_INCLUDES_<id>     include directories, relative to its
-#                                       directory, in addition to src
+#                                       directory or absolute, in addition to src
+#   WASM_STATIC_ADDON_TEMPLATE_<id>     NAME=value pairs for the @NAME@ variables
+#                                       of the *.in files among its resources
 set(WASM_STATIC_ADDONS "" CACHE STRING "Source directories of binary add-ons to link statically")
 find_program(WASM_PYTHON3 python3 HINTS "${NATIVEPREFIX}/bin" REQUIRED)
 
@@ -67,13 +70,14 @@ foreach(_dir ${WASM_STATIC_ADDONS})
   if(NOT _globs)
     set(_globs "src/*.cpp" "src/*.c")
   endif()
-  list(TRANSFORM _globs PREPEND "${_dir}/")
+  # Relative to the add-on, unless they point elsewhere.
+  list(TRANSFORM _globs PREPEND "${_dir}/" REGEX "^[^/]")
   file(GLOB_RECURSE _sources CONFIGURE_DEPENDS ${_globs})
   if(WASM_STATIC_ADDON_EXCLUDE_${_id})
     list(FILTER _sources EXCLUDE REGEX "${WASM_STATIC_ADDON_EXCLUDE_${_id}}")
   endif()
   set(_includes ${WASM_STATIC_ADDON_INCLUDES_${_id}})
-  list(TRANSFORM _includes PREPEND "${_dir}/")
+  list(TRANSFORM _includes PREPEND "${_dir}/" REGEX "^[^/]")
   add_library(${_id} STATIC ${_sources})
   # The add-on is not Kodi code: it is not held to Kodi's warning set, and must
   # find its own headers where Kodi has some of the same name.
@@ -113,14 +117,21 @@ foreach(_dir ${WASM_STATIC_ADDONS})
   set(_addon_data "${CMAKE_BINARY_DIR}/addons/${_id}")
   file(COPY "${_dir}/${_id}/" DESTINATION "${_addon_data}" PATTERN "addon.xml.in" EXCLUDE)
   file(WRITE "${_addon_data}/${_id}.wasm" "")
-  # Templates the add-on's own build would fill in; their variables mean nothing here.
+  # Templates the add-on's own build would fill in. Variables that are not given
+  # a value in WASM_STATIC_ADDON_TEMPLATE_<id> become empty.
   file(GLOB_RECURSE _templates "${_addon_data}/*.in")
   foreach(_template ${_templates})
     file(READ "${_template}" _content)
+    foreach(_variable ${WASM_STATIC_ADDON_TEMPLATE_${_id}})
+      string(REGEX MATCH "^([^=]+)=(.*)$" _unused "${_variable}")
+      string(REPLACE "@${CMAKE_MATCH_1}@" "${CMAKE_MATCH_2}" _content "${_content}")
+    endforeach()
     string(REGEX REPLACE "@[A-Za-z0-9_]+@" "" _content "${_content}")
     string(REGEX REPLACE "\\.in$" "" _output "${_template}")
     file(WRITE "${_output}" "${_content}")
     file(REMOVE "${_template}")
+    # The data is packed when linking, which does not see it change by itself.
+    set_property(TARGET ${APP_NAME_LC} APPEND PROPERTY LINK_DEPENDS "${_output}")
   endforeach()
   string(REPLACE "@ADDON_DEPENDS@" "" _addon_xml "${_addon_xml}")
   string(REPLACE "@PLATFORM@" "wasm" _addon_xml "${_addon_xml}")
@@ -128,6 +139,7 @@ foreach(_dir ${WASM_STATIC_ADDONS})
   # Other binary add-ons are not part of this build.
   string(REGEX REPLACE "[ \t]*<import addon=\"inputstream\\.[^>]*>[ \t]*\r?\n" "" _addon_xml "${_addon_xml}")
   file(WRITE "${_addon_data}/addon.xml" "${_addon_xml}")
+  set_property(TARGET ${APP_NAME_LC} APPEND PROPERTY LINK_DEPENDS "${_addon_data}/addon.xml")
 
   string(APPEND _static_addon_declarations
          "int ${_prefix}_ADDON_Create(void*);\n"

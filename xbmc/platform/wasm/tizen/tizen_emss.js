@@ -12,7 +12,7 @@
 // Player state is published to C++ through a block of shared wasm memory (see
 // TizenEmssState in TizenEMSS.h) instead of callbacks: Kodi's threads only poll it.
 mergeInto(LibraryManager.library, {
-  $TizenEmss__deps: ['$UTF8ToString'],
+  $TizenEmss__deps: ['$UTF8ToString', '$TizenDrm'],
   $TizenEmss: {
     // Field offsets of TizenEmssState, in bytes.
     OFF_SOURCE_STATE: 0,
@@ -33,6 +33,9 @@ mergeInto(LibraryManager.library, {
     STATE_ENDED: 4,
 
     statePtr: 0,
+    // Handles of the tizen_drm.js sessions the next source decrypts with.
+    drmVideo: 0,
+    drmAudio: 0,
     source: null,
     video: null,
     url: null,
@@ -40,6 +43,38 @@ mergeInto(LibraryManager.library, {
     configured: false,
     rafId: 0,
     listeners: [],
+
+    setKeys: function(track, handle) {
+      var session = handle ? TizenDrm.session(handle) : null;
+      if (!session) return;
+      // Firmware that does not take a session per track decrypts with the keys of
+      // the media element.
+      try {
+        track.setMediaKeySession(session);
+      } catch (e) {
+        console.log('[kodi][emss] setMediaKeySession: ' + e.name);
+      }
+    },
+
+    // Result of tizen_emss_append() for an exception of appendPacketSync().
+    appendError: function(e) {
+      switch (e && e.name) {
+        case 'AppendBufferFullError':
+          return 1;
+        case 'AppendInvalidTrackStateError':
+        case 'InvalidStateError':
+          return 2;
+        case 'AppendIgnoredError':
+        case 'AppendExpectsKeyframeError':
+        case 'AppendInvalidDtsError':
+        case 'AppendInvalidPtsError':
+        case 'AppendNoDurationError':
+          return 3;
+        default:
+          console.error('[kodi][emss] appendPacket: ' + (e && e.name) + ': ' + (e && e.message));
+          return 4;
+      }
+    },
 
     hasPlayer: function() {
       return typeof tizentvwasm !== 'undefined' &&
@@ -296,10 +331,12 @@ mergeInto(LibraryManager.library, {
       try {
         source.duration = duration;
         var videoTrack = source.addVideoTrack(videoConfig);
+        TizenEmss.setKeys(videoTrack, TizenEmss.drmVideo);
         TizenEmss.watchTrack(videoTrack, TizenEmss.OFF_VIDEO_OPEN);
         TizenEmss.setI32(TizenEmss.OFF_VIDEO_TRACK, videoTrack.trackId);
         if (audioConfig) {
           var audioTrack = source.addAudioTrack(audioConfig);
+          TizenEmss.setKeys(audioTrack, TizenEmss.drmAudio);
           TizenEmss.watchTrack(audioTrack, TizenEmss.OFF_AUDIO_OPEN);
           TizenEmss.setI32(TizenEmss.OFF_AUDIO_TRACK, audioTrack.trackId);
         }
@@ -329,6 +366,13 @@ mergeInto(LibraryManager.library, {
     });
     TizenEmss.listen(video, 'canplay', TizenEmss.tryPlay);
     TizenEmss.listen(video, 'ended', function() { TizenEmss.setI32(TizenEmss.OFF_ENDED, 1); });
+
+    var mediaKeys = TizenDrm.keys(TizenEmss.drmVideo) || TizenDrm.keys(TizenEmss.drmAudio);
+    if (mediaKeys && video.mediaKeys !== mediaKeys) {
+      video.setMediaKeys(mediaKeys).catch(function(e) {
+        TizenEmss.fail('setting the media keys', e);
+      });
+    }
 
     video.style.visibility = 'visible';
     TizenEmss.url = URL.createObjectURL(source);
@@ -423,23 +467,51 @@ mergeInto(LibraryManager.library, {
       }, HEAPU8.subarray(data, data + size));
       return 0;
     } catch (e) {
-      switch (e && e.name) {
-        case 'AppendBufferFullError':
-          return 1;
-        case 'AppendInvalidTrackStateError':
-        case 'InvalidStateError':
-          return 2;
-        case 'AppendIgnoredError':
-        case 'AppendExpectsKeyframeError':
-        case 'AppendInvalidDtsError':
-        case 'AppendInvalidPtsError':
-        case 'AppendNoDurationError':
-          return 3;
-        default:
-          console.error('[kodi][emss] appendPacket: ' + (e && e.name) + ': ' + (e && e.message));
-          return 4;
-      }
+      return TizenEmss.appendError(e);
     }
+  },
+
+  // tizen_emss_append() for a packet the TV has to decrypt. keyId and iv are 16
+  // bytes each; subsamples holds subsampleCount pairs of clear and encrypted byte
+  // counts as 32 bit integers.
+  tizen_emss_append_encrypted__deps: ['$TizenEmss'],
+  tizen_emss_append_encrypted__sig: 'iipidddiipppii',
+  tizen_emss_append_encrypted: function(trackId, data, size, pts, dts, duration, keyFrame,
+                                        sessionId, keyId, iv, subsamples, subsampleCount, cbcs) {
+    var subs = [];
+    for (var i = 0; i < subsampleCount; i++) {
+      subs.push({
+        clearBytes: HEAPU32[(subsamples >> 2) + 2 * i],
+        encryptedBytes: HEAPU32[(subsamples >> 2) + 2 * i + 1],
+      });
+    }
+    try {
+      tizentvwasm.SideThreadElementaryMediaTrack.appendPacketSync(trackId, {
+        pts: pts,
+        dts: dts,
+        duration: duration,
+        isKeyFrame: keyFrame !== 0,
+        isEncrypted: true,
+        sessionId: sessionId,
+        keyId: HEAPU8.slice(keyId, keyId + 16),
+        initializationVector: HEAPU8.slice(iv, iv + 16),
+        encryptionMode: cbcs ? 'cbcs' : 'cenc',
+        subsamples: subs,
+      }, HEAPU8.subarray(data, data + size));
+      return 0;
+    } catch (e) {
+      return TizenEmss.appendError(e);
+    }
+  },
+
+  // Sessions of tizen_drm.js whose keys the tracks of the next tizen_emss_open()
+  // decrypt with; 0 for a track that is not encrypted.
+  tizen_emss_set_media_keys__deps: ['$TizenEmss'],
+  tizen_emss_set_media_keys__proxy: 'sync',
+  tizen_emss_set_media_keys__sig: 'vii',
+  tizen_emss_set_media_keys: function(videoSession, audioSession) {
+    TizenEmss.drmVideo = videoSession;
+    TizenEmss.drmAudio = audioSession;
   },
 
   tizen_emss_end_of_track__sig: 'vii',

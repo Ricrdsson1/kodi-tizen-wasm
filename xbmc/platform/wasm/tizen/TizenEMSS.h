@@ -109,5 +109,19 @@ int tizen_emss_append(int trackId,
                       double duration,
                       int keyFrame,
                       int sessionId);
+int tizen_emss_append_encrypted(int trackId,
+                                const uint8_t* data,
+                                int size,
+                                double pts,
+                                double dts,
+                                double duration,
+                                int keyFrame,
+                                int sessionId,
+                                const uint8_t* keyId,
+                                const uint8_t* iv,
+                                const uint32_t* subsamples,
+                                int subsampleCount,
+                                int cbcs);
+void tizen_emss_set_media_keys(int videoSession, int audioSession);
 void tizen_emss_end_of_track(int trackId, int sessionId);
 }

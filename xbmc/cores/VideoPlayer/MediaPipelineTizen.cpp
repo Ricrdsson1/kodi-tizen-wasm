@@ -12,6 +12,7 @@
 #include "DVDClock.h"
 #include "DVDCodecs/Overlay/DVDOverlay.h"
 #include "DVDOverlayContainer.h"
+#include "Interface/DemuxCrypto.h"
 #include "Interface/DemuxPacket.h"
 #include "Interface/TimingConstants.h"
 #include "Process/ProcessInfo.h"
@@ -224,6 +225,16 @@ bool IsKeyFrame(AVCodecID codec, const uint8_t* data, int size)
   }
 }
 
+/*!
+ * \brief Handle of the tizen_drm.js session a stream is encrypted for, 0 if it is not.
+ *
+ * InputStream Adaptive's decrypter passes the handle as its session id.
+ */
+int DrmSession(const CDVDStreamInfo& hint)
+{
+  return hint.cryptoSession ? atoi(hint.cryptoSession->sessionId.c_str()) : 0;
+}
+
 double ToSeconds(double dvdTime)
 {
   return dvdTime / DVD_TIME_BASE;
@@ -367,6 +378,11 @@ void CMediaPipelineTizen::SetupBitstreamConverter()
   m_convertedPacket = nullptr;
 
   if (m_videoHint.codec != AV_CODEC_ID_H264 && m_videoHint.codec != AV_CODEC_ID_HEVC)
+    return;
+
+  // The offsets of the encrypted parts of a packet do not survive a conversion;
+  // InputStream Adaptive delivers encrypted streams in Annex B itself.
+  if (m_videoHint.cryptoSession)
     return;
 
   // Only a stream with an avcC/hvcC record is length-prefixed.
@@ -582,6 +598,7 @@ bool CMediaPipelineTizen::Load()
              m_videoHint.width, m_videoHint.height, fps, config.videoExtradataSize,
              audioMime ? audioMime : "none", config.duration);
 
+  tizen_emss_set_media_keys(DrmSession(m_videoHint), audioMime ? DrmSession(m_audioHint) : 0);
   if (!tizen_emss_open(&m_state, &config))
   {
     CLog::LogF(LOGERROR, "The Tizen WASM Player did not open");
@@ -719,15 +736,39 @@ bool CMediaPipelineTizen::Restart(const double pts)
 }
 
 bool CMediaPipelineTizen::Append(const int trackId,
+                                 const DemuxPacket& packet,
                                  const uint8_t* data,
                                  const int size,
                                  const double pts,
-                                 const double dts,
-                                 const double duration,
                                  const bool keyFrame)
 {
-  switch (tizen_emss_append(trackId, data, size, pts, dts, duration, keyFrame ? 1 : 0,
-                            m_state.sessionId))
+  const double dts = packet.dts == DVD_NOPTS_VALUE ? pts : ToSeconds(packet.dts);
+  const double duration = packet.duration > 0.0 ? ToSeconds(packet.duration)
+                                                : (trackId == m_state.videoTrack ? m_frameDuration
+                                                                                 : 0.02);
+
+  int result;
+  const DEMUX_CRYPTO_INFO* crypto = packet.cryptoInfo;
+  if (crypto && crypto->numSubSamples > 0)
+  {
+    std::vector<uint32_t> subsamples;
+    subsamples.reserve(2 * crypto->numSubSamples);
+    for (unsigned int i = 0; i < crypto->numSubSamples; ++i)
+    {
+      subsamples.push_back(crypto->clearBytes[i]);
+      subsamples.push_back(crypto->cipherBytes[i]);
+    }
+    // 2 is AES-CBC, the cbcs scheme; anything else here is AES-CTR, cenc.
+    result = tizen_emss_append_encrypted(
+        trackId, data, size, pts, dts, duration, keyFrame ? 1 : 0, m_state.sessionId, crypto->kid,
+        crypto->iv, subsamples.data(), static_cast<int>(crypto->numSubSamples),
+        crypto->mode == 2 ? 1 : 0);
+  }
+  else
+    result = tizen_emss_append(trackId, data, size, pts, dts, duration, keyFrame ? 1 : 0,
+                               m_state.sessionId);
+
+  switch (result)
   {
     case TIZEN_EMSS_APPEND_BUFFER_FULL:
     case TIZEN_EMSS_APPEND_TRACK_CLOSED:
@@ -773,13 +814,11 @@ bool CMediaPipelineTizen::FeedVideoData(const std::shared_ptr<CDVDMsg>& msg)
     size = m_bitstream->GetConvertSize();
   }
 
-  const double dts = packet->dts == DVD_NOPTS_VALUE ? pts : ToSeconds(packet->dts);
-  const double duration = packet->duration > 0.0 ? ToSeconds(packet->duration) : m_frameDuration;
   if (packet->m_keyFrame)
     m_demuxerFlagsKeyFrames = true;
   const bool keyFrame = m_demuxerFlagsKeyFrames ? packet->m_keyFrame
                                                 : IsKeyFrame(m_videoHint.codec, data, size);
-  if (!Append(m_state.videoTrack, data, size, pts, dts, duration, keyFrame))
+  if (!Append(m_state.videoTrack, *packet, data, size, pts, keyFrame))
     return false;
 
   m_convertedPacket = nullptr;
@@ -802,9 +841,7 @@ bool CMediaPipelineTizen::FeedAudioData(const std::shared_ptr<CDVDMsg>& msg)
     return false;
 
   const double pts = ToSeconds(packet->pts);
-  const double duration = packet->duration > 0.0 ? ToSeconds(packet->duration) : 0.02;
-  const double dts = packet->dts == DVD_NOPTS_VALUE ? pts : ToSeconds(packet->dts);
-  if (!Append(m_state.audioTrack, packet->pData, packet->iSize, pts, dts, duration, true))
+  if (!Append(m_state.audioTrack, *packet, packet->pData, packet->iSize, pts, true))
     return false;
 
   m_fedAudioPts = pts;

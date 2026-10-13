@@ -23,6 +23,8 @@ EMSDK_VERSION=5.0.6
 PUGIXML_VERSION=1.16
 IPTVSIMPLE_REVISION=6d334f6dfa16bbb4c0209ee50bb70f16bccb13bf
 IPTVSIMPLE_VERSION=22.6.5
+# The decrypter for the browser's DRM, built into InputStream Adaptive.
+ADAPTIVE_EXTRA=$KODI/tools/wasm/tizen/inputstream.adaptive
 BENTO4_VERSION=1.6.0-641-6-Piers
 ADAPTIVE_REVISION=84bdb3581521ccbd5df1bee24eb2c2b4c9499932
 
@@ -82,6 +84,7 @@ fi
 if [ ! -d "$WORK/addons-src/inputstream.adaptive" ]; then
   git clone https://github.com/xbmc/inputstream.adaptive "$WORK/addons-src/inputstream.adaptive"
   git -C "$WORK/addons-src/inputstream.adaptive" checkout -q $ADAPTIVE_REVISION
+  git -C "$WORK/addons-src/inputstream.adaptive" apply "$ADAPTIVE_EXTRA/eme-decrypter.patch"
 fi
 
 if [ ! -d "$WORK/addons-src/pvr.iptvsimple" ]; then
@@ -93,11 +96,12 @@ cmake -S "$KODI" -B "$WORK/build" \
       -DCMAKE_TOOLCHAIN_FILE="$TARGET/share/Toolchain.cmake" \
       -DCMAKE_BUILD_TYPE=Release -DCORE_PLATFORM_NAME=wasm \
       -DWASM_STATIC_ADDONS="$WORK/addons-src/pvr.iptvsimple;$WORK/addons-src/inputstream.adaptive" \
-      -DWASM_STATIC_ADDON_SOURCES_inputstream.adaptive="src/*.cpp;lib/mpegts/mpegts/*.cpp;lib/webm_parser/src/*.cc" \
+      -DWASM_STATIC_ADDON_SOURCES_inputstream.adaptive="src/*.cpp;lib/mpegts/mpegts/*.cpp;lib/webm_parser/src/*.cc;$ADAPTIVE_EXTRA/src/*.cpp" \
       -DWASM_STATIC_ADDON_EXCLUDE_inputstream.adaptive="/src/test/|/decrypters/widevine" \
-      -DWASM_STATIC_ADDON_INCLUDES_inputstream.adaptive="lib/mpegts;lib/webm_parser/include;lib/webm_parser" \
+      -DWASM_STATIC_ADDON_INCLUDES_inputstream.adaptive="lib/mpegts;lib/webm_parser/include;lib/webm_parser;$ADAPTIVE_EXTRA/src" \
       -DWASM_STATIC_ADDON_LIBRARIES_inputstream.adaptive="ap4;pugixml" \
-      -DWASM_STATIC_ADDON_DEFINITIONS_inputstream.adaptive="__STDC_FORMAT_MACROS;TARGET_DARWIN_EMBEDDED" \
+      -DWASM_STATIC_ADDON_DEFINITIONS_inputstream.adaptive="__STDC_FORMAT_MACROS" \
+      -DWASM_STATIC_ADDON_TEMPLATE_inputstream.adaptive="DECRYPTERPATH=special://home/cdm" \
       -DWASM_STATIC_ADDON_LIBRARIES_pvr.iptvsimple=pugixml \
       -DWASM_STATIC_ADDON_DEFINITIONS_pvr.iptvsimple=IPTV_VERSION=$IPTVSIMPLE_VERSION
 make -C "$WORK/build" -j"$JOBS"
