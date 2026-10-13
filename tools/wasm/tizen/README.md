@@ -24,7 +24,18 @@ It has been run on one TV only: a 2025 model on Tizen 9.0 (Chromium 120).
 
 ## Building
 
-Build the dependencies as described in [README.WASM.md](../../../docs/README.WASM.md)
+`build.sh` does all of the steps below on a Linux host, starting with the Emscripten
+SDK, and links in the IPTV Simple Client add-on:
+
+```
+tools/wasm/tizen/build.sh <work-dir> [<security-profile>]
+```
+
+It needs git, curl, zip, make, a C/C++ compiler, autoconf, automake, libtool,
+pkg-config and Python 3.10 or newer. The first run downloads and builds for a long
+time; a later run skips what is already built.
+
+By hand: build the dependencies as described in [README.WASM.md](../../../docs/README.WASM.md)
 (Emscripten 5.0.6), then configure and build Kodi with the toolchain file that step
 installs:
 
