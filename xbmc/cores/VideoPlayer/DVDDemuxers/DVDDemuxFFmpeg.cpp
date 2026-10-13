@@ -193,6 +193,84 @@ static int64_t dvd_file_seek(void* h, int64_t pos, int whence)
     return pInputStream->Seek(pos, whence & ~AVSEEK_FORCE);
 }
 
+#ifdef TARGET_WASM
+// FFmpeg's own protocols need sockets, which a browser does not have. Everything a
+// demuxer opens by itself (HLS playlists, segments and keys) is read through CFile.
+static int kodi_io_read(void* h, uint8_t* buf, int size)
+{
+  const ssize_t len = static_cast<XFILE::CFile*>(h)->Read(buf, size);
+  if (len == 0)
+    return AVERROR_EOF;
+  return len < 0 ? AVERROR(EIO) : static_cast<int>(len);
+}
+
+static int64_t kodi_io_seek(void* h, int64_t pos, int whence)
+{
+  XFILE::CFile* file = static_cast<XFILE::CFile*>(h);
+  if (whence == AVSEEK_SIZE)
+  {
+    const int64_t length = file->GetLength();
+    return length > 0 ? length : AVERROR(ENOSYS);
+  }
+  return file->Seek(pos, whence & ~AVSEEK_FORCE);
+}
+
+static int kodi_io_open(
+    AVFormatContext* s, AVIOContext** pb, const char* url, int flags, AVDictionary** options)
+{
+  if (flags & AVIO_FLAG_WRITE)
+    return AVERROR(ENOSYS);
+
+  CURL curl(url);
+  const AVDictionaryEntry* headers = options ? av_dict_get(*options, "headers", nullptr, 0) : nullptr;
+  if (headers)
+  {
+    for (const std::string& line : StringUtils::Split(headers->value, "\r\n"))
+    {
+      const size_t colon = line.find(':');
+      if (colon == std::string::npos)
+        continue;
+
+      std::string name = line.substr(0, colon);
+      std::string value = line.substr(colon + 1);
+      curl.SetProtocolOption(StringUtils::Trim(name), StringUtils::Trim(value));
+    }
+  }
+
+  auto file = std::make_unique<XFILE::CFile>();
+  if (!file->Open(curl, XFILE::READ_NO_CACHE))
+    return AVERROR(EIO);
+
+  // A byte range of a media playlist.
+  const AVDictionaryEntry* offset = options ? av_dict_get(*options, "offset", nullptr, 0) : nullptr;
+  if (offset && file->Seek(strtoll(offset->value, nullptr, 10), SEEK_SET) < 0)
+    return AVERROR(EIO);
+
+  constexpr int bufferSize = 32 * 1024;
+  uint8_t* buffer = static_cast<uint8_t*>(av_malloc(bufferSize));
+  if (!buffer)
+    return AVERROR(ENOMEM);
+
+  *pb = avio_alloc_context(buffer, bufferSize, 0, file.get(), kodi_io_read, nullptr, kodi_io_seek);
+  if (!*pb)
+  {
+    av_free(buffer);
+    return AVERROR(ENOMEM);
+  }
+  (*pb)->seekable = file->GetLength() > 0 ? AVIO_SEEKABLE_NORMAL : 0;
+  file.release();
+  return 0;
+}
+
+static int kodi_io_close(AVFormatContext* s, AVIOContext* pb)
+{
+  delete static_cast<XFILE::CFile*>(pb->opaque);
+  av_freep(&pb->buffer);
+  avio_context_free(&pb);
+  return 0;
+}
+#endif
+
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -288,6 +366,10 @@ bool CDVDDemuxFFmpeg::Open(const std::shared_ptr<CDVDInputStream>& pInput, bool 
   // open the demuxer
   m_pFormatContext  = avformat_alloc_context();
   m_pFormatContext->interrupt_callback = int_cb;
+#ifdef TARGET_WASM
+  m_pFormatContext->io_open = kodi_io_open;
+  m_pFormatContext->io_close2 = kodi_io_close;
+#endif
 
   // try to abort after 30 seconds
   m_timeout.Set(30s);
@@ -364,6 +446,10 @@ bool CDVDDemuxFFmpeg::Open(const std::shared_ptr<CDVDInputStream>& pInput, bool 
       avformat_close_input(&m_pFormatContext);
       m_pFormatContext = avformat_alloc_context();
       m_pFormatContext->interrupt_callback = int_cb;
+#ifdef TARGET_WASM
+      m_pFormatContext->io_open = kodi_io_open;
+      m_pFormatContext->io_close2 = kodi_io_close;
+#endif
       AVDictionary* options = GetFFMpegOptionsFromInput();
       av_dict_set_int(&options, "load_all_variants", 0, AV_OPT_SEARCH_CHILDREN);
       if (avformat_open_input(&m_pFormatContext, strFile.c_str(), iformat, &options) < 0)
@@ -830,6 +916,13 @@ AVDictionary* CDVDDemuxFFmpeg::GetFFMpegOptionsFromInput()
   // For a local file we need the following protocol whitelist
   if (url.GetProtocol().empty() || url.IsProtocol("file"))
     av_dict_set(&options, "protocol_whitelist", "file,http,https,tcp,tls,crypto", 0);
+
+#ifdef TARGET_WASM
+  // Reusing a connection is a feature of FFmpeg's own http protocol.
+  av_dict_set(&options, "http_persistent", "0", 0);
+  // IPTV providers serve segments under arbitrary names.
+  av_dict_set(&options, "extension_picky", "0", 0);
+#endif
 
   if (url.IsProtocol("http") || url.IsProtocol("https"))
   {

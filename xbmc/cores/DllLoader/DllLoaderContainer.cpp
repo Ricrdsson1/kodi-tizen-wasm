@@ -9,6 +9,9 @@
 #include "DllLoaderContainer.h"
 #ifdef TARGET_POSIX
 #include "SoLoader.h"
+#ifdef TARGET_WASM
+#include "platform/wasm/StaticAddons.h"
+#endif
 #endif
 #ifdef TARGET_WINDOWS
 #include "Win32DllLoader.h"
@@ -228,7 +231,9 @@ LibraryLoader* DllLoaderContainer::LoadDll(const char* sName, bool bLoadSymbols)
 #endif
 
   LibraryLoader* pLoader;
-#ifdef TARGET_POSIX
+#if defined(TARGET_WASM)
+  pLoader = new CStaticAddonLoader(sName);
+#elif defined(TARGET_POSIX)
   pLoader = new SoLoader(sName, bLoadSymbols);
 #elif defined(TARGET_WINDOWS)
   pLoader = new Win32DllLoader(sName, false);

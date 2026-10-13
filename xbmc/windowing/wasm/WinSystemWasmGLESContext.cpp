@@ -13,6 +13,7 @@
 #include "WasmClipboard.h"
 #include "WasmVsync.h"
 #include "WebGLCommit.h"
+#include "cores/VideoPlayer/VideoRenderers/HwDecRender/RendererTizen.h"
 #include "cores/VideoPlayer/VideoRenderers/LinuxRendererGLES.h"
 #include "cores/VideoPlayer/VideoRenderers/RenderFactory.h"
 #include "rendering/gles/ScreenshotSurfaceGLES.h"
@@ -20,6 +21,8 @@
 #include "utils/log.h"
 #include "windowing/GraphicContext.h"
 #include "windowing/WindowSystemFactory.h"
+
+#include "platform/wasm/tizen/TizenEMSS.h"
 
 #include <cstdint>
 #include <string>
@@ -46,7 +49,8 @@ EMSCRIPTEN_WEBGL_CONTEXT_HANDLE CreateProxiedGLContext()
 {
   EmscriptenWebGLContextAttributes attrs;
   emscripten_webgl_init_context_attributes(&attrs);
-  attrs.alpha = EM_FALSE;
+  // The Tizen WASM Player shows video on a plane below the canvas.
+  attrs.alpha = tizen_emss_available() ? EM_TRUE : EM_FALSE;
   attrs.depth = EM_TRUE;
   attrs.stencil = EM_TRUE;
   attrs.antialias = EM_FALSE;
@@ -110,6 +114,8 @@ bool CWinSystemWasmGLESContext::InitWindowSystem()
 {
   VIDEOPLAYER::CRendererFactory::ClearRenderer();
   CLinuxRendererGLES::Register();
+  if (tizen_emss_available())
+    CRendererTizen::Register();
   CScreenshotSurfaceGLES::Register();
 
   int initW = 0;

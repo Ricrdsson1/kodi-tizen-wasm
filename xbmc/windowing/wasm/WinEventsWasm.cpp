@@ -187,6 +187,35 @@ XBMCKey TranslateDomKey(const EmscriptenKeyboardEvent* e)
   {
     case 10009: // Tizen TV hardware Back key
       return XBMCK_ESCAPE;
+    // Tizen TV remote keys, delivered once registered with tizen.tvinputdevice.
+    case 415:
+      return XBMCK_PLAY;
+    case 19:
+      return XBMCK_PAUSE;
+    case 10252:
+      return XBMCK_MEDIA_PLAY_PAUSE;
+    case 413:
+      return XBMCK_MEDIA_STOP;
+    case 412:
+      return XBMCK_MEDIA_REWIND;
+    case 417:
+      return XBMCK_MEDIA_FASTFORWARD;
+    case 10232:
+      return XBMCK_MEDIA_PREV_TRACK;
+    case 10233:
+      return XBMCK_MEDIA_NEXT_TRACK;
+    case 403:
+      return XBMCK_RED;
+    case 404:
+      return XBMCK_GREEN;
+    case 405:
+      return XBMCK_YELLOW;
+    case 406:
+      return XBMCK_BLUE;
+    case 457:
+      return XBMCK_INFO;
+    case 458:
+      return XBMCK_GUIDE;
     case DOM_VK_BACK_SPACE:
       return XBMCK_BACKSPACE;
     case DOM_VK_TAB:

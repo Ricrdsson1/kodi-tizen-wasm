@@ -1,5 +1,7 @@
-set(SOURCES NetworkWasm.cpp)
+set(SOURCES CurlWasm.cpp
+            NetworkWasm.cpp)
 
-set(HEADERS NetworkWasm.h)
+set(HEADERS CurlWasm.h
+            NetworkWasm.h)
 
 core_add_library(platform_wasm_network)
