@@ -22,6 +22,7 @@
 #include <string>
 #include <thread>
 
+class CBitstreamConverter;
 class CDVDClock;
 class CDVDOverlayContainer;
 class CProcessInfo;
@@ -102,7 +103,21 @@ private:
    */
   bool FeedVideoData(const std::shared_ptr<CDVDMsg>& msg);
   bool FeedAudioData(const std::shared_ptr<CDVDMsg>& msg);
-  bool Append(int trackId, const DemuxPacket& packet, double pts, double duration, bool keyFrame);
+  bool Append(int trackId,
+              const uint8_t* data,
+              int size,
+              double pts,
+              double dts,
+              double duration,
+              bool keyFrame);
+
+  /*!
+   * \brief Prepare the conversion of length-prefixed H.264/HEVC to Annex B.
+   *
+   * Annex B carries the parameter sets in the stream, which lets the resolution
+   * change without the TV's tracks being set up again.
+   */
+  void SetupBitstreamConverter();
 
   /*!
    * \brief Start the TV at the position of the first packet that follows a flush.
@@ -120,6 +135,13 @@ private:
   CDVDStreamInfo m_videoHint;
   VideoPicture m_picture{};
   double m_frameDuration{0.04}; // seconds
+  std::unique_ptr<CBitstreamConverter> m_bitstream;
+  const DemuxPacket* m_convertedPacket{nullptr};
+  // Set once the demuxer has flagged a key frame; until then they are looked for here.
+  bool m_demuxerFlagsKeyFrames{false};
+  // Largest picture the TV was told to expect.
+  int m_configWidth{0};
+  int m_configHeight{0};
 
   // Serialise feeding against Load(), Unload() and Flush().
   std::mutex m_videoFeedMutex;

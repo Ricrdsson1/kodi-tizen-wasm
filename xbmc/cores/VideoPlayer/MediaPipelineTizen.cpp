@@ -20,6 +20,7 @@
 #include "cores/AudioEngine/Utils/AEUtil.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
+#include "utils/BitstreamConverter.h"
 #include "utils/StringUtils.h"
 #include "utils/log.h"
 
@@ -45,6 +46,10 @@ constexpr double UNKNOWN_DURATION = 24.0 * 60.0 * 60.0;
 
 // Polls of 10ms the TV is given to reopen its tracks after a seek.
 constexpr int RESTART_TIMEOUT_POLLS = 500;
+
+// Adaptive streams start small; the TV is told to expect at least this much.
+constexpr int MIN_CONFIG_WIDTH = 1920;
+constexpr int MIN_CONFIG_HEIGHT = 1080;
 
 // Seconds of audio ahead of the playback position that count as a full buffer.
 constexpr double FULL_AUDIO_BUFFER = 2.0;
@@ -132,6 +137,90 @@ std::string VideoMime(const CDVDStreamInfo& hint)
     }
     default:
       return {};
+  }
+}
+
+/*!
+ * \brief Whether a packet can be decoded on its own.
+ *
+ * Only the FFmpeg demuxer says so itself; the TV refuses to start on anything else.
+ * H.264 and HEVC are expected in Annex B.
+ */
+bool IsKeyFrame(AVCodecID codec, const uint8_t* data, int size)
+{
+  switch (codec)
+  {
+    case AV_CODEC_ID_H264:
+    case AV_CODEC_ID_HEVC:
+    {
+      for (int i = 0; i + 3 < size; ++i)
+      {
+        if (data[i] != 0 || data[i + 1] != 0 || data[i + 2] != 1)
+          continue;
+
+        const uint8_t header = data[i + 3];
+        if (codec == AV_CODEC_ID_H264)
+        {
+          const int type = header & 0x1f;
+          if (type == 5) // IDR slice
+            return true;
+          if (type == 1) // any other slice
+            return false;
+        }
+        else
+        {
+          const int type = (header >> 1) & 0x3f;
+          if (type >= 16 && type <= 23) // IRAP picture
+            return true;
+          if (type < 16) // any other slice
+            return false;
+        }
+        i += 3;
+      }
+      return false;
+    }
+    case AV_CODEC_ID_VP8:
+      return size > 0 && (data[0] & 0x01) == 0;
+    case AV_CODEC_ID_VP9:
+    {
+      if (size < 1)
+        return false;
+      // frame_marker(2) profile(2) [reserved(1) for profile 3] show_existing_frame(1) frame_type(1)
+      const bool profile3 = (data[0] & 0x30) == 0x30;
+      const int showExisting = profile3 ? (data[0] >> 2) & 1 : (data[0] >> 3) & 1;
+      const int frameType = profile3 ? (data[0] >> 1) & 1 : (data[0] >> 2) & 1;
+      return !showExisting && frameType == 0;
+    }
+    case AV_CODEC_ID_AV1:
+    {
+      // A key frame comes with a sequence header OBU (type 1).
+      int pos = 0;
+      while (pos < size)
+      {
+        const uint8_t header = data[pos];
+        const int type = (header >> 3) & 0x0f;
+        const bool extension = header & 0x04;
+        const bool hasSize = header & 0x02;
+        if (type == 1)
+          return true;
+        if (!hasSize)
+          return false;
+
+        pos += extension ? 2 : 1;
+        int obuSize = 0;
+        for (int shift = 0; pos < size && shift < 35; shift += 7)
+        {
+          const uint8_t byte = data[pos++];
+          obuSize |= (byte & 0x7f) << shift;
+          if (!(byte & 0x80))
+            break;
+        }
+        pos += obuSize;
+      }
+      return false;
+    }
+    default:
+      return true;
   }
 }
 
@@ -245,7 +334,7 @@ bool CMediaPipelineTizen::OpenVideoStream(CDVDStreamInfo hint)
   }
 
   const bool changed = m_videoHint != hint;
-  m_videoHint = hint;
+  const bool sameCodec = m_videoHint.codec == hint.codec;
   m_videoClosed = false;
 
   if (m_loaded)
@@ -253,12 +342,41 @@ bool CMediaPipelineTizen::OpenVideoStream(CDVDStreamInfo hint)
     if (!changed)
       return true;
 
+    // A change of quality that stays within what the TV was told to expect.
+    if (sameCodec && hint.width <= m_configWidth && hint.height <= m_configHeight)
+    {
+      std::unique_lock lock(m_videoFeedMutex);
+      m_videoHint = hint;
+      SetupBitstreamConverter();
+      m_processInfo.SetVideoDimensions(hint.width, hint.height);
+      return true;
+    }
+
     Unload();
   }
 
+  m_videoHint = hint;
   if (m_audioHint.codec != AV_CODEC_ID_NONE || !m_hasAudio)
     return Load();
   return true;
+}
+
+void CMediaPipelineTizen::SetupBitstreamConverter()
+{
+  m_bitstream.reset();
+  m_convertedPacket = nullptr;
+
+  if (m_videoHint.codec != AV_CODEC_ID_H264 && m_videoHint.codec != AV_CODEC_ID_HEVC)
+    return;
+
+  // Only a stream with an avcC/hvcC record is length-prefixed.
+  if (m_videoHint.extradata.GetSize() < 7 || m_videoHint.extradata.GetData()[0] != 1)
+    return;
+
+  auto converter = std::make_unique<CBitstreamConverter>();
+  if (converter->Open(m_videoHint.codec, m_videoHint.extradata.GetData(),
+                      static_cast<int>(m_videoHint.extradata.GetSize()), true))
+    m_bitstream = std::move(converter);
 }
 
 void CMediaPipelineTizen::CloseAudioStream(const bool waitForBuffers)
@@ -405,7 +523,15 @@ bool CMediaPipelineTizen::Load()
   m_frameDuration = 1.0 / fps;
 
   const std::string videoMime = VideoMime(m_videoHint);
-  if (tizen_emss_validate_video(videoMime.c_str(), m_videoHint.width, m_videoHint.height, fpsRate,
+  m_configWidth = std::max(m_videoHint.width, MIN_CONFIG_WIDTH);
+  m_configHeight = std::max(m_videoHint.height, MIN_CONFIG_HEIGHT);
+  if (tizen_emss_validate_video(videoMime.c_str(), m_configWidth, m_configHeight, fpsRate,
+                                fpsScale) == 0)
+  {
+    m_configWidth = m_videoHint.width;
+    m_configHeight = m_videoHint.height;
+  }
+  if (tizen_emss_validate_video(videoMime.c_str(), m_configWidth, m_configHeight, fpsRate,
                                 fpsScale) == 0)
   {
     CLog::LogF(LOGERROR, "The TV rejects {} at {}x{}@{:.3f}", videoMime, m_videoHint.width,
@@ -429,10 +555,19 @@ bool CMediaPipelineTizen::Load()
   TizenEmssConfig config{};
   config.duration = maxTime > 0 ? maxTime / 1000.0 : UNKNOWN_DURATION;
   config.videoMime = videoMime.c_str();
-  config.videoExtradata = m_videoHint.extradata.GetData();
-  config.videoExtradataSize = static_cast<int32_t>(m_videoHint.extradata.GetSize());
-  config.width = m_videoHint.width;
-  config.height = m_videoHint.height;
+  SetupBitstreamConverter();
+  if (m_bitstream)
+  {
+    config.videoExtradata = m_bitstream->GetExtraData();
+    config.videoExtradataSize = m_bitstream->GetExtraSize();
+  }
+  else
+  {
+    config.videoExtradata = m_videoHint.extradata.GetData();
+    config.videoExtradataSize = static_cast<int32_t>(m_videoHint.extradata.GetSize());
+  }
+  config.width = m_configWidth;
+  config.height = m_configHeight;
   config.framerateNum = fpsRate;
   config.framerateDen = fpsScale;
   config.hasAudio = audioMime ? 1 : 0;
@@ -503,6 +638,7 @@ bool CMediaPipelineTizen::Load()
   }
 
   m_hasAudioTrack = audioMime != nullptr;
+  m_demuxerFlagsKeyFrames = false;
   m_fedAudioPts = -1.0;
   m_fedVideoPts = -1.0;
   m_shownPosition = -1.0;
@@ -583,15 +719,15 @@ bool CMediaPipelineTizen::Restart(const double pts)
 }
 
 bool CMediaPipelineTizen::Append(const int trackId,
-                                 const DemuxPacket& packet,
+                                 const uint8_t* data,
+                                 const int size,
                                  const double pts,
+                                 const double dts,
                                  const double duration,
                                  const bool keyFrame)
 {
-  const double dts = packet.dts == DVD_NOPTS_VALUE ? pts : ToSeconds(packet.dts);
-
-  switch (tizen_emss_append(trackId, packet.pData, packet.iSize, pts, dts, duration,
-                            keyFrame ? 1 : 0, m_state.sessionId))
+  switch (tizen_emss_append(trackId, data, size, pts, dts, duration, keyFrame ? 1 : 0,
+                            m_state.sessionId))
   {
     case TIZEN_EMSS_APPEND_BUFFER_FULL:
     case TIZEN_EMSS_APPEND_TRACK_CLOSED:
@@ -622,9 +758,31 @@ bool CMediaPipelineTizen::FeedVideoData(const std::shared_ptr<CDVDMsg>& msg)
   if (!Restart(pts) || !m_state.videoOpen)
     return false;
 
+  const uint8_t* data = packet->pData;
+  int size = packet->iSize;
+  if (m_bitstream)
+  {
+    // A packet that the TV did not take yet is offered again as it was converted.
+    if (m_convertedPacket != packet)
+    {
+      if (!m_bitstream->Convert(packet->pData, packet->iSize))
+        return true;
+      m_convertedPacket = packet;
+    }
+    data = m_bitstream->GetConvertBuffer();
+    size = m_bitstream->GetConvertSize();
+  }
+
+  const double dts = packet->dts == DVD_NOPTS_VALUE ? pts : ToSeconds(packet->dts);
   const double duration = packet->duration > 0.0 ? ToSeconds(packet->duration) : m_frameDuration;
-  if (!Append(m_state.videoTrack, *packet, pts, duration, packet->m_keyFrame))
+  if (packet->m_keyFrame)
+    m_demuxerFlagsKeyFrames = true;
+  const bool keyFrame = m_demuxerFlagsKeyFrames ? packet->m_keyFrame
+                                                : IsKeyFrame(m_videoHint.codec, data, size);
+  if (!Append(m_state.videoTrack, data, size, pts, dts, duration, keyFrame))
     return false;
+
+  m_convertedPacket = nullptr;
 
   m_fedVideoPts = pts;
   return true;
@@ -645,7 +803,8 @@ bool CMediaPipelineTizen::FeedAudioData(const std::shared_ptr<CDVDMsg>& msg)
 
   const double pts = ToSeconds(packet->pts);
   const double duration = packet->duration > 0.0 ? ToSeconds(packet->duration) : 0.02;
-  if (!Append(m_state.audioTrack, *packet, pts, duration, true))
+  const double dts = packet->dts == DVD_NOPTS_VALUE ? pts : ToSeconds(packet->dts);
+  if (!Append(m_state.audioTrack, packet->pData, packet->iSize, pts, dts, duration, true))
     return false;
 
   m_fedAudioPts = pts;
