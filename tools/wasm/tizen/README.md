@@ -32,7 +32,7 @@ It has been run on one TV only: a 2025 model on Tizen 9.0 (Chromium 120).
 ## Building
 
 `build.sh` does all of the steps below on a Linux host, starting with the Emscripten
-SDK, and links in the IPTV Simple Client add-on:
+SDK, and links in the PVR add-ons and InputStream Adaptive:
 
 ```
 tools/wasm/tizen/build.sh <work-dir> [<security-profile>]
@@ -72,6 +72,49 @@ symbols, apart from the entry points, are made local
 add-on that is not listed in `system/addon-manifest.xml` starts out disabled. Further
 per add-on options (source globs, exclusions, include directories) are described in
 `cmake/scripts/wasm/ExtraTargets.cmake`; `build.sh` shows them for InputStream Adaptive.
+
+## PVR add-ons
+
+`build.sh` links in the PVR add-ons of `pvr-addons.txt`, at the revisions pinned there,
+and `static_addons.py` derives their build options. All of them compile, link and are
+found by Kodi; only the IPTV Simple Client is enabled from the start, the others are
+enabled under Add-ons > My add-ons > PVR clients.
+
+Only the IPTV Simple Client has been used against a real backend. The others are
+untested: an add-on that talks to its backend over a protocol of its own depends on the
+sockets of the TV, and those for services with DRM (such as Zattoo, Waipu, Teleboy)
+on the DRM support described above.
+
+| Add-on | Name | Version |
+|---|---|---|
+| `pvr.argustv` | ARGUS TV client | 22.3.5 |
+| `pvr.demo` | Demo PVR Client | 22.4.5 |
+| `pvr.dvblink` | TVMosaic/DVBLink PVR Client | 22.3.2 |
+| `pvr.dvbviewer` | DVBViewer Client | 22.3.2 |
+| `pvr.filmon` | Filmon Client | 22.2.5 |
+| `pvr.freebox` | PVR Freebox TV | 22.2.1 |
+| `pvr.hdhomerun` | HDHomeRun Client | 22.2.7 |
+| `pvr.hts` | Tvheadend HTSP Client | 22.9.3 |
+| `pvr.iptvsimple` | IPTV Simple Client | 22.6.5 |
+| `pvr.mediaportal.tvserver` | MediaPortal PVR Client | 22.2.5 |
+| `pvr.mythtv` | MythTV PVR Client | 22.3.19 |
+| `pvr.nextpvr` | NextPVR PVR Client | 22.6.2 |
+| `pvr.njoy` | Njoy N7 PVR Client | 22.2.4 |
+| `pvr.octonet` | Digital Devices Octopus NET Client | 22.2.1 |
+| `pvr.pctv` | PCTV Systems Client | 22.2.5 |
+| `pvr.plutotv` | Pluto.tv PVR Client | 22.3.2 |
+| `pvr.sledovanitv.cz` | Sledovanitv.cz Client (unofficial) | 22.6.1 |
+| `pvr.stalker` | Stalker Client | 22.2.7 |
+| `pvr.teleboy` | Teleboy PVR Client | 22.2.2 |
+| `pvr.vbox` | VBox TV Gateway PVR Client | 22.2.5 |
+| `pvr.vdr.vnsi` | VDR VNSI Client | 22.3.3 |
+| `pvr.vuplus` | Enigma2 Client | 22.3.7 |
+| `pvr.waipu` | waipu.tv PVR Client | 22.10.0 |
+| `pvr.wmc` | Windows Media Center Client | 22.2.5 |
+| `pvr.zattoo` | Zattoo PVR Client | 22.2.3 |
+
+Only the translations named by `ADDON_LANGUAGES` in `build.sh` are shipped with them,
+as all of the data is held in memory.
 
 ## Packaging
 

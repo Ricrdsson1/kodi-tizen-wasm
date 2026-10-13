@@ -1,0 +1,26 @@
+# PVR add-ons linked into the Tizen build: id, repository, revision.
+pvr.argustv https://github.com/kodi-pvr/pvr.argustv 682aafe13f80e2da31b15e4ce8b3ac439b0a1743
+pvr.demo https://github.com/kodi-pvr/pvr.demo 4f4ac5fb8857ea167592edc0a92fa71c94232d8f
+pvr.dvblink https://github.com/kodi-pvr/pvr.dvblink 720d2e314d405ff4a6c2c7cbb5f8643c4a048c66
+pvr.dvbviewer https://github.com/kodi-pvr/pvr.dvbviewer 9dc2de529d2027fb51e25afa141deaf2f846c8ea
+pvr.filmon https://github.com/kodi-pvr/pvr.filmon 9faf2d9437741fde78bbf08a4588fc06a21aa7c6
+pvr.freebox https://github.com/aassif/pvr.freebox 186a6e085163cacbbc7a654f9d782d281e1b1918
+pvr.hdhomerun https://github.com/kodi-pvr/pvr.hdhomerun dbda9e36074e627c4db7b0943889bf1eefc153b8
+pvr.hts https://github.com/kodi-pvr/pvr.hts 9f4ffc0a3ad0ec3613341a73f22510c3c091f071
+pvr.iptvsimple https://github.com/kodi-pvr/pvr.iptvsimple 6d334f6dfa16bbb4c0209ee50bb70f16bccb13bf
+pvr.mediaportal.tvserver https://github.com/kodi-pvr/pvr.mediaportal.tvserver 876e10d1f6ed92995d809e6a086024a9bd2ac5ba
+pvr.mythtv https://github.com/janbar/pvr.mythtv 903b54a5d14adba869f484ec2792a78f98cf36c7
+pvr.nextpvr https://github.com/kodi-pvr/pvr.nextpvr 4bab07fb6e36875335fa044cecefa0252ea3e976
+pvr.njoy https://github.com/kodi-pvr/pvr.njoy 51560f5aa2d6ad5c816448018348e7ee7711fb33
+pvr.octonet https://github.com/DigitalDevices/pvr.octonet 68d57c46a6b380e85aca9911be8436a1f06e356c
+pvr.pctv https://github.com/kodi-pvr/pvr.pctv 58395149c472b558d236d932ed5a1fc69715db7a
+pvr.plutotv https://github.com/kodi-pvr/pvr.plutotv 55580c6b3a47ed64d7eedc70c6271dfaf575b42b
+pvr.sledovanitv.cz https://github.com/palinek/pvr.sledovanitv.cz 07d520b6135f67e3a1d54c353159688460e81187
+pvr.stalker https://github.com/kodi-pvr/pvr.stalker da3a25fda064c54d4856e754a790cce49ebd990d
+pvr.teleboy https://github.com/rbuehlma/pvr.teleboy f676bcb8a392b8ced164670b3d7735c437c19455
+pvr.vbox https://github.com/kodi-pvr/pvr.vbox d3d8c8175a654c28dd111b7e162a8221dde3414a
+pvr.vdr.vnsi https://github.com/kodi-pvr/pvr.vdr.vnsi 511d59906d922285a19a5e0e22a29e6abc43dc89
+pvr.vuplus https://github.com/kodi-pvr/pvr.vuplus 984b1b8aef5e55c8ce1577c111c36b73f8fb228a
+pvr.waipu https://github.com/flubshi/pvr.waipu f374e4a7080a618613a199dfc80aa4708502d419
+pvr.wmc https://github.com/kodi-pvr/pvr.wmc e0310be8d4d3c0f2143276d6a85fb595c33966f5
+pvr.zattoo https://github.com/rbuehlma/pvr.zattoo 30c809e66f8eef22987fb518e89875031781dcae

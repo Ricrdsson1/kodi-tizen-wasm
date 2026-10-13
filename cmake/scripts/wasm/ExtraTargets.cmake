@@ -55,6 +55,10 @@ endif()
 #   WASM_STATIC_ADDON_TEMPLATE_<id>     NAME=value pairs for the @NAME@ variables
 #                                       of the *.in files among its resources
 set(WASM_STATIC_ADDONS "" CACHE STRING "Source directories of binary add-ons to link statically")
+# All of the data is loaded into memory at start, and translations are most of an
+# add-on's. English is always kept, as it is what Kodi falls back to.
+set(WASM_STATIC_ADDON_LANGUAGES "" CACHE STRING
+    "Languages of static add-ons to ship, e.g. cs_cz;de_de (default: all)")
 find_program(WASM_PYTHON3 python3 HINTS "${NATIVEPREFIX}/bin" REQUIRED)
 
 set(_static_addon_declarations "")
@@ -84,11 +88,14 @@ foreach(_dir ${WASM_STATIC_ADDONS})
   set_target_properties(${_id} PROPERTIES COMPILE_OPTIONS "" INCLUDE_DIRECTORIES ""
                                           FOLDER "Static Addons")
   target_include_directories(${_id} PRIVATE "${_dir}/src" ${_includes}
+                                            "${CMAKE_SOURCE_DIR}/tools/wasm/addon-compat"
                                             "${CMAKE_SOURCE_DIR}/xbmc/addons/kodi-dev-kit/include"
                                             "${DEPENDS_PATH}/include")
   target_compile_definitions(${_id} PRIVATE ADDON_Create=${_prefix}_ADDON_Create
                                             ADDON_GetTypeVersion=${_prefix}_ADDON_GetTypeVersion
                                             ADDON_GetTypeMinVersion=${_prefix}_ADDON_GetTypeMinVersion
+                                            # What add-ons take Emscripten's POSIX for.
+                                            TARGET_POSIX TARGET_LINUX
                                             ${WASM_STATIC_ADDON_DEFINITIONS_${_id}})
 
   # Every add-on carries its own copy of the add-on development kit and of the
@@ -115,7 +122,17 @@ foreach(_dir ${WASM_STATIC_ADDONS})
 
   # Kodi only starts an add-on whose library file exists.
   set(_addon_data "${CMAKE_BINARY_DIR}/addons/${_id}")
+  file(REMOVE_RECURSE "${_addon_data}")
   file(COPY "${_dir}/${_id}/" DESTINATION "${_addon_data}" PATTERN "addon.xml.in" EXCLUDE)
+  if(WASM_STATIC_ADDON_LANGUAGES)
+    file(GLOB _languages "${_addon_data}/resources/language/resource.language.*")
+    foreach(_language ${_languages})
+      string(REGEX REPLACE ".*resource\\.language\\." "" _code "${_language}")
+      if(NOT _code STREQUAL "en_gb" AND NOT _code IN_LIST WASM_STATIC_ADDON_LANGUAGES)
+        file(REMOVE_RECURSE "${_language}")
+      endif()
+    endforeach()
+  endif()
   file(WRITE "${_addon_data}/${_id}.wasm" "")
   # Templates the add-on's own build would fill in. Variables that are not given
   # a value in WASM_STATIC_ADDON_TEMPLATE_<id> become empty.
