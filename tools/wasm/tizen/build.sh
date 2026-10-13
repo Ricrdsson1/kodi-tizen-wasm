@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
 # Builds Kodi for Samsung Tizen TVs from scratch: the Emscripten SDK, Kodi's
-# dependencies, the IPTV Simple Client and InputStream Adaptive add-ons, Kodi
+# dependencies, the PVR add-ons of pvr-addons.txt and InputStream Adaptive, Kodi
 # itself and the widget.
 #
 # Usage: build.sh <work-dir> [<security-profile>]
@@ -21,8 +21,10 @@ JOBS=${JOBS:-$(getconf _NPROCESSORS_ONLN)}
 
 EMSDK_VERSION=5.0.6
 PUGIXML_VERSION=1.16
-IPTVSIMPLE_REVISION=6d334f6dfa16bbb4c0209ee50bb70f16bccb13bf
-IPTVSIMPLE_VERSION=22.6.5
+JSONCPP_VERSION=1.9.8
+HDHOMERUN_REVISION=7c54382fb681d03888b469033e50bebaf4ce6bce
+# Translations of the add-ons to ship besides English; all of them if empty.
+ADDON_LANGUAGES=${ADDON_LANGUAGES-"cs_cz;sk_sk;de_de;pl_pl;fr_fr;es_es;it_it"}
 # The decrypter for the browser's DRM, built into InputStream Adaptive.
 ADAPTIVE_EXTRA=$KODI/tools/wasm/tizen/inputstream.adaptive
 BENTO4_VERSION=1.6.0-641-6-Piers
@@ -87,23 +89,62 @@ if [ ! -d "$WORK/addons-src/inputstream.adaptive" ]; then
   git -C "$WORK/addons-src/inputstream.adaptive" apply "$ADAPTIVE_EXTRA/eme-decrypter.patch"
 fi
 
-if [ ! -d "$WORK/addons-src/pvr.iptvsimple" ]; then
-  git clone https://github.com/kodi-pvr/pvr.iptvsimple "$WORK/addons-src/pvr.iptvsimple"
-  git -C "$WORK/addons-src/pvr.iptvsimple" checkout -q $IPTVSIMPLE_REVISION
+if [ ! -f "$TARGET/lib/libjsoncpp.a" ]; then
+  mkdir -p "$WORK/tarballs" "$WORK/addons-src/jsoncpp-src" "$WORK/addons-src/build-jsoncpp"
+  curl -fL -o "$WORK/tarballs/jsoncpp-$JSONCPP_VERSION.tar.gz" \
+       "https://github.com/open-source-parsers/jsoncpp/archive/refs/tags/$JSONCPP_VERSION.tar.gz"
+  tar -xf "$WORK/tarballs/jsoncpp-$JSONCPP_VERSION.tar.gz" -C "$WORK/addons-src/jsoncpp-src" \
+      --strip-components=1
+  cmake -S "$WORK/addons-src/jsoncpp-src" -B "$WORK/addons-src/build-jsoncpp" \
+        -DCMAKE_TOOLCHAIN_FILE="$TARGET/share/Toolchain.cmake" -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_OBJECT_LIBS=OFF \
+        -DJSONCPP_WITH_TESTS=OFF -DJSONCPP_WITH_POST_BUILD_UNITTEST=OFF \
+        -DJSONCPP_WITH_EXAMPLE=OFF -DCMAKE_INSTALL_PREFIX="$TARGET"
+  make -C "$WORK/addons-src/build-jsoncpp" -j"$JOBS" install
 fi
+
+PVR_DIRS=()
+while read -r id url revision; do
+  case $id in ''|\#*) continue ;; esac
+  if [ ! -d "$WORK/addons-src/pvr/$id" ]; then
+    git clone "$url" "$WORK/addons-src/pvr/$id"
+    git -C "$WORK/addons-src/pvr/$id" checkout -q "$revision"
+  fi
+  PVR_DIRS+=("$WORK/addons-src/pvr/$id")
+done < "$KODI/tools/wasm/tizen/pvr-addons.txt"
+
+# libhdhomerun has no build system of its own; pvr.hdhomerun brings one.
+if [ ! -f "$TARGET/lib/libhdhomerun.a" ]; then
+  mkdir -p "$WORK/tarballs" "$WORK/addons-src/hdhomerun-src" "$WORK/addons-src/build-hdhomerun"
+  curl -fL -o "$WORK/tarballs/libhdhomerun-$HDHOMERUN_REVISION.tar.gz" \
+       "https://github.com/Silicondust/libhdhomerun/archive/$HDHOMERUN_REVISION.tar.gz"
+  tar -xf "$WORK/tarballs/libhdhomerun-$HDHOMERUN_REVISION.tar.gz" \
+      -C "$WORK/addons-src/hdhomerun-src" --strip-components=1
+  cp "$WORK/addons-src/pvr/pvr.hdhomerun/depends/common/hdhomerun/CMakeLists.txt" \
+     "$WORK/addons-src/hdhomerun-src/"
+  cmake -S "$WORK/addons-src/hdhomerun-src" -B "$WORK/addons-src/build-hdhomerun" \
+        -DCMAKE_TOOLCHAIN_FILE="$TARGET/share/Toolchain.cmake" -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX="$TARGET"
+  make -C "$WORK/addons-src/build-hdhomerun" -j"$JOBS" install
+fi
+
+mapfile -t PVR_OPTIONS < <("$KODI/tools/wasm/tizen/static_addons.py" "$TARGET" "${PVR_DIRS[@]}")
+# The last line lists the add-ons; InputStream Adaptive joins them.
+PVR_ADDONS=${PVR_OPTIONS[-1]#-DWASM_STATIC_ADDONS=}
+unset 'PVR_OPTIONS[-1]'
 
 cmake -S "$KODI" -B "$WORK/build" \
       -DCMAKE_TOOLCHAIN_FILE="$TARGET/share/Toolchain.cmake" \
       -DCMAKE_BUILD_TYPE=Release -DCORE_PLATFORM_NAME=wasm \
-      -DWASM_STATIC_ADDONS="$WORK/addons-src/pvr.iptvsimple;$WORK/addons-src/inputstream.adaptive" \
+      "${PVR_OPTIONS[@]}" \
+      -DWASM_STATIC_ADDONS="$PVR_ADDONS;$WORK/addons-src/inputstream.adaptive" \
+      -DWASM_STATIC_ADDON_LANGUAGES="$ADDON_LANGUAGES" \
       -DWASM_STATIC_ADDON_SOURCES_inputstream.adaptive="src/*.cpp;lib/mpegts/mpegts/*.cpp;lib/webm_parser/src/*.cc;$ADAPTIVE_EXTRA/src/*.cpp" \
       -DWASM_STATIC_ADDON_EXCLUDE_inputstream.adaptive="/src/test/|/decrypters/widevine" \
       -DWASM_STATIC_ADDON_INCLUDES_inputstream.adaptive="lib/mpegts;lib/webm_parser/include;lib/webm_parser;$ADAPTIVE_EXTRA/src" \
       -DWASM_STATIC_ADDON_LIBRARIES_inputstream.adaptive="ap4;pugixml" \
       -DWASM_STATIC_ADDON_DEFINITIONS_inputstream.adaptive="__STDC_FORMAT_MACROS" \
-      -DWASM_STATIC_ADDON_TEMPLATE_inputstream.adaptive="DECRYPTERPATH=special://home/cdm" \
-      -DWASM_STATIC_ADDON_LIBRARIES_pvr.iptvsimple=pugixml \
-      -DWASM_STATIC_ADDON_DEFINITIONS_pvr.iptvsimple=IPTV_VERSION=$IPTVSIMPLE_VERSION
+      -DWASM_STATIC_ADDON_TEMPLATE_inputstream.adaptive="DECRYPTERPATH=special://home/cdm"
 make -C "$WORK/build" -j"$JOBS"
 
 "$KODI/tools/wasm/tizen/package.sh" "$WORK/build" $PROFILE
