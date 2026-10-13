@@ -1,0 +1,41 @@
+diff --git a/src/decrypters/DrmFactory.cpp b/src/decrypters/DrmFactory.cpp
+index 16f7fb3..45ee8c2 100644
+--- a/src/decrypters/DrmFactory.cpp
++++ b/src/decrypters/DrmFactory.cpp
+@@ -17,6 +17,8 @@
+ 
+ #if ANDROID
+ #include "widevineandroid/WVDecrypter.h"
++#elif defined(__EMSCRIPTEN__)
++#include "decrypters/eme/EmeDecrypter.h"
+ #else
+ #ifndef TARGET_DARWIN_EMBEDDED
+ #include "widevine/WVDecrypter.h"
+@@ -112,6 +114,8 @@ std::shared_ptr<DRM::IDecrypter> DRM::FACTORY::GetDecrypter(STREAM_CRYPTO_KEY_SY
+   {
+ #if ANDROID
+     return std::make_shared<CWVDecrypterA>();
++#elif defined(__EMSCRIPTEN__)
++    return std::make_shared<CEmeDecrypter>();
+ #else
+ // Darwin embedded are apple platforms different than MacOS (e.g. IOS)
+ #ifndef TARGET_DARWIN_EMBEDDED
+@@ -124,6 +128,9 @@ std::shared_ptr<DRM::IDecrypter> DRM::FACTORY::GetDecrypter(STREAM_CRYPTO_KEY_SY
+   {
+ #if ANDROID
+     return std::make_shared<CWVDecrypterA>();
++#elif defined(__EMSCRIPTEN__)
++    if (keySystem == STREAM_CRYPTO_KEY_SYSTEM_PLAYREADY)
++      return std::make_shared<CEmeDecrypter>();
+ #endif
+   }
+ 
+@@ -138,6 +145,8 @@ std::vector<std::shared_ptr<DRM::IDecrypter>> DRM::FACTORY::GetDecrypters()
+ 
+ #if ANDROID
+   drms.emplace_back(std::make_shared<CWVDecrypterA>());
++#elif defined(__EMSCRIPTEN__)
++  drms.emplace_back(std::make_shared<CEmeDecrypter>());
+ #else
+ // Darwin embedded are apple platforms different than MacOS (e.g. IOS)
+ #ifndef TARGET_DARWIN_EMBEDDED

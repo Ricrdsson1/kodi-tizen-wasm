@@ -12,7 +12,12 @@ It has been run on one TV only: a 2025 model on Tizen 9.0 (Chromium 120).
   Opus audio. Other video codecs are decoded in software, which is too slow for HD.
 * HLS, read through Kodi's file layer instead of FFmpeg's network code.
 * Unencrypted DASH through InputStream Adaptive, including changes of quality while
-  playing. Its Widevine decrypter is left out, so DRM protected streams do not play.
+  playing.
+* Widevine protected video, experimentally: a decrypter added to InputStream Adaptive
+  (`tools/wasm/tizen/inputstream.adaptive`) runs the license exchange through the
+  browser's Encrypted Media Extensions, and the TV decrypts the packets. Encrypted
+  audio does not play yet: the TV reports an audio decode error. PlayReady is wired
+  up the same way but untested.
 * Binary add-ons linked into the executable (see below).
 
 ## What does not

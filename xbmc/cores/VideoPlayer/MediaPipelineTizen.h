@@ -104,11 +104,10 @@ private:
   bool FeedVideoData(const std::shared_ptr<CDVDMsg>& msg);
   bool FeedAudioData(const std::shared_ptr<CDVDMsg>& msg);
   bool Append(int trackId,
+              const DemuxPacket& packet,
               const uint8_t* data,
               int size,
               double pts,
-              double dts,
-              double duration,
               bool keyFrame);
 
   /*!
