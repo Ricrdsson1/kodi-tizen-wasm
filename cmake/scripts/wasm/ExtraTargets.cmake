@@ -42,9 +42,12 @@ endif()
 # A browser cannot load a shared library at run time, so the binary add-ons whose
 # source directories are listed in WASM_STATIC_ADDONS are linked into the
 # executable. xbmc/platform/wasm/StaticAddons.h describes the table generated here.
+#
+# Per add-on, WASM_STATIC_ADDON_LIBRARIES_<id> names the libraries it needs from
+# the depends prefix and WASM_STATIC_ADDON_DEFINITIONS_<id> the compile definitions
+# its own build would set.
 set(WASM_STATIC_ADDONS "" CACHE STRING "Source directories of binary add-ons to link statically")
-set(WASM_STATIC_ADDON_LIBRARIES "" CACHE STRING "Libraries from the depends prefix those add-ons need")
-set(WASM_STATIC_ADDON_DEFINITIONS "" CACHE STRING "Compile definitions those add-ons need")
+find_program(WASM_PYTHON3 python3 HINTS "${NATIVEPREFIX}/bin" REQUIRED)
 
 set(_static_addon_declarations "")
 set(_static_addon_rows "")
@@ -65,8 +68,29 @@ foreach(_dir ${WASM_STATIC_ADDONS})
   target_compile_definitions(${_id} PRIVATE ADDON_Create=${_prefix}_ADDON_Create
                                             ADDON_GetTypeVersion=${_prefix}_ADDON_GetTypeVersion
                                             ADDON_GetTypeMinVersion=${_prefix}_ADDON_GetTypeMinVersion
-                                            ${WASM_STATIC_ADDON_DEFINITIONS})
-  target_link_libraries(${APP_NAME_LC} ${_id})
+                                            ${WASM_STATIC_ADDON_DEFINITIONS_${_id}})
+
+  # Every add-on carries its own copy of the add-on development kit and of the
+  # libraries it uses. Merged into one object in which only the entry points stay
+  # global, the copies of two add-ons cannot collide.
+  set(_libraries "")
+  foreach(_library ${WASM_STATIC_ADDON_LIBRARIES_${_id}})
+    list(APPEND _libraries "${DEPENDS_PATH}/lib/lib${_library}.a")
+  endforeach()
+  set(_merged "${CMAKE_BINARY_DIR}/static-addons/${_id}.merged.o")
+  set(_isolated "${CMAKE_BINARY_DIR}/static-addons/${_id}.o")
+  add_custom_command(OUTPUT "${_isolated}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/static-addons"
+    COMMAND ${CMAKE_LINKER} -r --whole-archive $<TARGET_FILE:${_id}> --no-whole-archive
+            ${_libraries} -o "${_merged}"
+    COMMAND ${WASM_PYTHON3} "${CMAKE_SOURCE_DIR}/tools/wasm/localize_symbols.py"
+            "${_merged}" "${_isolated}" ${_prefix}_ADDON_Create
+            ${_prefix}_ADDON_GetTypeVersion ${_prefix}_ADDON_GetTypeMinVersion
+    DEPENDS ${_id} ${_libraries} "${CMAKE_SOURCE_DIR}/tools/wasm/localize_symbols.py"
+    COMMENT "Isolating the symbols of ${_id}"
+    VERBATIM)
+  set_source_files_properties("${_isolated}" PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+  target_sources(${APP_NAME_LC} PRIVATE "${_isolated}")
 
   # Kodi only starts an add-on whose library file exists.
   set(_addon_data "${CMAKE_BINARY_DIR}/addons/${_id}")
@@ -88,10 +112,6 @@ foreach(_dir ${WASM_STATIC_ADDONS})
          "     reinterpret_cast<void*>(${_prefix}_ADDON_GetTypeVersion),\n"
          "     reinterpret_cast<void*>(${_prefix}_ADDON_GetTypeMinVersion)},\n")
   message(STATUS "WASM: linking binary add-on ${_id} statically")
-endforeach()
-
-foreach(_library ${WASM_STATIC_ADDON_LIBRARIES})
-  target_link_libraries(${APP_NAME_LC} "${DEPENDS_PATH}/lib/lib${_library}.a")
 endforeach()
 
 set(_static_addon_table "${CMAKE_BINARY_DIR}/StaticAddonsTable.cpp")
