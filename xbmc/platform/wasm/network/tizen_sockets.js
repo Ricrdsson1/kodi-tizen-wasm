@@ -51,6 +51,12 @@
     if (lib[name + '__sig']) upstream[alias + '__sig'] = lib[name + '__sig'];
     if (lib[name + '__async'] !== undefined) upstream[alias + '__async'] = lib[name + '__async'];
   }
+  // Emscripten before 6 has no separate non-blocking poll.
+  if (!lib.__syscall_poll_nonblocking) {
+    delete upstream.kodi_upstream_poll_nonblocking__proxy;
+    upstream.kodi_upstream_poll_nonblocking__deps = ['kodi_upstream_poll'];
+    upstream.kodi_upstream_poll_nonblocking = (fds, nfds) => _kodi_upstream_poll(fds, nfds, 0);
+  }
   addToLibrary(upstream);
 })();
 
@@ -254,7 +260,7 @@ addToLibrary({
     msgFlagsToJs(flags) {
       const F = tizentvwasm.MsgFlags;
       let js = 0;
-      if (flags & {{{ cDefs.MSG_PEEK }}}) js |= F.MSG_PEEK;
+      if (flags & {{{ 2 /* MSG_PEEK */ }}}) js |= F.MSG_PEEK;
       if (flags & 1 /* MSG_OOB */) js |= F.MSG_OOB;
       if (flags & 256 /* MSG_WAITALL */) js |= F.MSG_WAITALL;
       if (flags & 16384 /* MSG_NOSIGNAL */) js |= F.MSG_NOSIGNAL;
@@ -498,7 +504,7 @@ addToLibrary({
         8: ['so_rcvbuf', 'int'],
         9: ['so_keepalive', 'int'],
         13: ['so_linger', 'linger'],
-        {{{ cDefs.SO_REUSEPORT }}}: ['so_reuseport', 'int'],
+        {{{ 15 /* SO_REUSEPORT */ }}}: ['so_reuseport', 'int'],
         66: ['so_rcvtimeo', 'timeval'],
         67: ['so_sndtimeo', 'timeval'],
       },
@@ -509,7 +515,7 @@ addToLibrary({
         5: ['tcp_keepintvl', 'int'],
         6: ['tcp_keepcnt', 'int'],
       },
-      [{{{ cDefs.IPPROTO_IP }}}]: {
+      [{{{ 0 /* IPPROTO_IP */ }}}]: {
         level: 'ipproto_ip',
         2: ['ip_ttl', 'int'],
         33: ['ip_multicast_ttl', 'u8'],
@@ -517,13 +523,13 @@ addToLibrary({
         35: ['ip_add_membership', 'mreq'],
         36: ['ip_drop_membership', 'mreq'],
       },
-      [{{{ cDefs.IPPROTO_IPV6 }}}]: {
+      [{{{ 41 /* IPPROTO_IPV6 */ }}}]: {
         level: 'ipproto_ipv6',
         18: ['ipv6_multicast_hops', 'int'],
         19: ['ipv6_multicast_loop', 'int'],
         20: ['ipv6_join_group', 'mreq6'],
         21: ['ipv6_leave_group', 'mreq6'],
-        {{{ cDefs.IPV6_V6ONLY }}}: ['ipv6_v6only', 'int'],
+        {{{ 26 /* IPV6_V6ONLY */ }}}: ['ipv6_v6only', 'int'],
       },
     },
 
@@ -852,8 +858,8 @@ addToLibrary({
     const got = TizenSockets.recv(fd, n, buffer, flags, name, name ? message + {{{ C_STRUCTS.msghdr.msg_namelen }}} : 0);
     if (got < 0) return got;
     TizenSockets.scatter(iov, iovcnt, buffer.subarray(0, got));
-    {{{ makeSetValue('message', C_STRUCTS.msghdr.msg_controllen, '0', 'i32') }}};
-    {{{ makeSetValue('message', C_STRUCTS.msghdr.msg_flags, '0', 'i32') }}};
+    {{{ makeSetValue('message', 20 /* msghdr.msg_controllen */, '0', 'i32') }}};
+    {{{ makeSetValue('message', 24 /* msghdr.msg_flags */, '0', 'i32') }}};
     return got;
   },
 
