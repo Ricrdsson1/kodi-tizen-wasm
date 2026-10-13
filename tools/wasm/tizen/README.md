@@ -11,6 +11,8 @@ It has been run on one TV only: a 2025 model on Tizen 9.0 (Chromium 120).
   (`xbmc/cores/VideoPlayer/MediaPipelineTizen.cpp`), with AAC, MP3, AC-3, E-AC-3 or
   Opus audio. Other video codecs are decoded in software, which is too slow for HD.
 * HLS, read through Kodi's file layer instead of FFmpeg's network code.
+* Unencrypted DASH through InputStream Adaptive, including changes of quality while
+  playing. Its Widevine decrypter is left out, so DRM protected streams do not play.
 * Binary add-ons linked into the executable (see below).
 
 ## What does not
@@ -62,7 +64,9 @@ The libraries have to be built for `wasm32-unknown-emscripten` and installed int
 depends prefix first. Each add-on is merged with its libraries into one object whose
 symbols, apart from the entry points, are made local
 (`tools/wasm/localize_symbols.py`), so add-ons do not collide with each other. An
-add-on that is not listed in `system/addon-manifest.xml` starts out disabled.
+add-on that is not listed in `system/addon-manifest.xml` starts out disabled. Further
+per add-on options (source globs, exclusions, include directories) are described in
+`cmake/scripts/wasm/ExtraTargets.cmake`; `build.sh` shows them for InputStream Adaptive.
 
 ## Packaging
 

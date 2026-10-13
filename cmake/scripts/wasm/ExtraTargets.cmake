@@ -43,9 +43,14 @@ endif()
 # source directories are listed in WASM_STATIC_ADDONS are linked into the
 # executable. xbmc/platform/wasm/StaticAddons.h describes the table generated here.
 #
-# Per add-on, WASM_STATIC_ADDON_LIBRARIES_<id> names the libraries it needs from
-# the depends prefix and WASM_STATIC_ADDON_DEFINITIONS_<id> the compile definitions
-# its own build would set.
+# Per add-on:
+#   WASM_STATIC_ADDON_LIBRARIES_<id>    libraries it needs from the depends prefix
+#   WASM_STATIC_ADDON_DEFINITIONS_<id>  compile definitions its own build would set
+#   WASM_STATIC_ADDON_SOURCES_<id>      source globs, relative to its directory
+#                                       (default: everything below src)
+#   WASM_STATIC_ADDON_EXCLUDE_<id>      regular expression of sources to leave out
+#   WASM_STATIC_ADDON_INCLUDES_<id>     include directories, relative to its
+#                                       directory, in addition to src
 set(WASM_STATIC_ADDONS "" CACHE STRING "Source directories of binary add-ons to link statically")
 find_program(WASM_PYTHON3 python3 HINTS "${NATIVEPREFIX}/bin" REQUIRED)
 
@@ -58,11 +63,23 @@ foreach(_dir ${WASM_STATIC_ADDONS})
 
   file(READ "${_dir}/${_id}/addon.xml.in" _addon_xml)
 
-  file(GLOB_RECURSE _sources CONFIGURE_DEPENDS "${_dir}/src/*.cpp" "${_dir}/src/*.c")
+  set(_globs ${WASM_STATIC_ADDON_SOURCES_${_id}})
+  if(NOT _globs)
+    set(_globs "src/*.cpp" "src/*.c")
+  endif()
+  list(TRANSFORM _globs PREPEND "${_dir}/")
+  file(GLOB_RECURSE _sources CONFIGURE_DEPENDS ${_globs})
+  if(WASM_STATIC_ADDON_EXCLUDE_${_id})
+    list(FILTER _sources EXCLUDE REGEX "${WASM_STATIC_ADDON_EXCLUDE_${_id}}")
+  endif()
+  set(_includes ${WASM_STATIC_ADDON_INCLUDES_${_id}})
+  list(TRANSFORM _includes PREPEND "${_dir}/")
   add_library(${_id} STATIC ${_sources})
-  # The add-on is not Kodi code and is not held to its warning set.
-  set_target_properties(${_id} PROPERTIES COMPILE_OPTIONS "" FOLDER "Static Addons")
-  target_include_directories(${_id} PRIVATE "${_dir}/src"
+  # The add-on is not Kodi code: it is not held to Kodi's warning set, and must
+  # find its own headers where Kodi has some of the same name.
+  set_target_properties(${_id} PROPERTIES COMPILE_OPTIONS "" INCLUDE_DIRECTORIES ""
+                                          FOLDER "Static Addons")
+  target_include_directories(${_id} PRIVATE "${_dir}/src" ${_includes}
                                             "${CMAKE_SOURCE_DIR}/xbmc/addons/kodi-dev-kit/include"
                                             "${DEPENDS_PATH}/include")
   target_compile_definitions(${_id} PRIVATE ADDON_Create=${_prefix}_ADDON_Create
@@ -96,6 +113,15 @@ foreach(_dir ${WASM_STATIC_ADDONS})
   set(_addon_data "${CMAKE_BINARY_DIR}/addons/${_id}")
   file(COPY "${_dir}/${_id}/" DESTINATION "${_addon_data}" PATTERN "addon.xml.in" EXCLUDE)
   file(WRITE "${_addon_data}/${_id}.wasm" "")
+  # Templates the add-on's own build would fill in; their variables mean nothing here.
+  file(GLOB_RECURSE _templates "${_addon_data}/*.in")
+  foreach(_template ${_templates})
+    file(READ "${_template}" _content)
+    string(REGEX REPLACE "@[A-Za-z0-9_]+@" "" _content "${_content}")
+    string(REGEX REPLACE "\\.in$" "" _output "${_template}")
+    file(WRITE "${_output}" "${_content}")
+    file(REMOVE "${_template}")
+  endforeach()
   string(REPLACE "@ADDON_DEPENDS@" "" _addon_xml "${_addon_xml}")
   string(REPLACE "@PLATFORM@" "wasm" _addon_xml "${_addon_xml}")
   string(REPLACE "@LIBRARY_FILENAME@" "${_id}.wasm" _addon_xml "${_addon_xml}")
