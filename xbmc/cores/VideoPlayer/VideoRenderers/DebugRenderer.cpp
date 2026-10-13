@@ -1,0 +1,175 @@
+/*
+ *  Copyright (C) 2005-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
+ *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
+ */
+
+#include "DebugRenderer.h"
+
+#include "cores/VideoPlayer/DVDCodecs/Overlay/DVDOverlayLibass.h"
+#include "cores/VideoPlayer/Interface/TimingConstants.h"
+#include "settings/SubtitlesSettings.h"
+#include "utils/log.h"
+
+using namespace OVERLAY;
+
+CDebugRenderer::CDebugRenderer()
+{
+}
+
+CDebugRenderer::~CDebugRenderer()
+{
+  Dispose();
+}
+
+void CDebugRenderer::Initialize()
+{
+  if (m_isInitialized)
+    return;
+
+  m_adapter = new CSubtitlesAdapter();
+
+  m_isInitialized = m_adapter->Initialize();
+  if (!m_isInitialized)
+  {
+    CLog::Log(LOGERROR, "{} - Failed to configure OSD info debug renderer", __FUNCTION__);
+    delete m_adapter;
+    m_adapter = nullptr;
+    return;
+  }
+
+  // We create only a single overlay with a fixed PTS for each rendered frame
+  m_overlay = m_adapter->CreateOverlay();
+  m_overlayRenderer.AddOverlay(m_overlay, 1000000., 0);
+
+  // Kick the dirty-driven walk skip so the toggle takes effect this frame;
+  // without this the walk stays idle and the debug overlay never starts
+  // rendering until something else dirties the GUI.
+  OVERLAY::MarkDirty();
+}
+
+void CDebugRenderer::Dispose()
+{
+  if (!m_isInitialized)
+    return;
+
+  m_isInitialized = false;
+  m_overlayRenderer.Flush();
+  m_overlay.reset();
+  OVERLAY::MarkDirty();
+  if (m_adapter)
+  {
+    delete m_adapter;
+    m_adapter = nullptr;
+  }
+}
+
+void CDebugRenderer::SetInfo(DEBUG_INFO_PLAYER& info)
+{
+  if (!m_isInitialized)
+    return;
+
+  // FIXME: We currently force ASS_Event's and the current PTS
+  // of rendering with fixed values to allow perpetual
+  // display of on-screen text. It would be appropriate for Libass
+  // provide a way to allow fixed on-screen text display
+  // without use all these fixed values.
+  m_adapter->FlushSubtitles();
+  m_adapter->AddSubtitle(info.audio, 0., 5000000.);
+  m_adapter->AddSubtitle(info.video, 0., 5000000.);
+  m_adapter->AddSubtitle(info.player, 0., 5000000.);
+  m_adapter->AddSubtitle(info.vsync, 0., 5000000.);
+}
+
+void CDebugRenderer::SetInfo(DEBUG_INFO_VIDEO& video, DEBUG_INFO_RENDER& render)
+{
+  if (!m_isInitialized)
+    return;
+
+  // FIXME: We currently force ASS_Event's and the current PTS
+  // of rendering with fixed values to allow perpetual
+  // display of on-screen text. It would be appropriate for Libass
+  // provide a way to allow fixed on-screen text display
+  // without use all these fixed values.
+  m_adapter->FlushSubtitles();
+  m_adapter->AddSubtitle(video.videoSource, 0., 5000000.);
+  m_adapter->AddSubtitle(video.metaPrim, 0., 5000000.);
+  m_adapter->AddSubtitle(video.metaLight, 0., 5000000.);
+  m_adapter->AddSubtitle(video.shader, 0., 5000000.);
+  m_adapter->AddSubtitle(video.render, 0., 5000000.);
+  m_adapter->AddSubtitle(render.renderFlags, 0., 5000000.);
+  m_adapter->AddSubtitle(render.videoOutput, 0., 5000000.);
+}
+
+void CDebugRenderer::Render(CRect& src, CRect& dst, CRect& view)
+{
+  if (!m_isInitialized)
+    return;
+
+  m_overlayRenderer.SetVideoRect(src, dst, view);
+  m_overlayRenderer.Render(0);
+
+  // Sustain the dirty-driven Render skip while the debug OSD is enabled.
+  // Unlike video subtitles (which call AddOverlay per video frame and so
+  // mark dirty per frame), the debug OSD only calls AddOverlay once at
+  // Initialize, so without a per-frame nudge here the GUI walk would not
+  // re-fire after the first frame and the debug OSD would freeze.
+  MarkDirty();
+}
+
+void CDebugRenderer::Flush()
+{
+  if (!m_isInitialized)
+    return;
+
+  m_adapter->FlushSubtitles();
+}
+
+CDebugRenderer::CRenderer::CRenderer() : OVERLAY::CRenderer()
+{
+}
+
+void CDebugRenderer::CRenderer::Render(int idx, float depth)
+{
+  if (!m_debugOverlayStyle)
+    CreateSubtitlesStyle();
+
+  SubtitleResolution resolution;
+  UpdateSubtitlePosition(resolution);
+
+  for (const SElement& e : m_buffers[idx])
+  {
+    if (!e.overlay_dvd)
+      continue;
+
+    const auto& ovAss = static_cast<const CDVDOverlayLibass&>(*e.overlay_dvd);
+    if (!ovAss.GetLibassHandler())
+      continue;
+
+    const KODI::SUBTITLES::STYLE::renderOpts rOpts{
+        GetRenderOptions(ovAss, *m_debugOverlayStyle, resolution)};
+
+    int changes = 0;
+    ASS_Image* images =
+        ovAss.GetLibassHandler()->RenderImage(e.pts, rOpts, m_debugOverlayStyle, &changes);
+
+    if (!images)
+      continue;
+
+    std::shared_ptr<COverlay> o = COverlay::Create(images, rOpts.frameWidth, rOpts.frameHeight);
+
+    if (o)
+      OVERLAY::CRenderer::Render(o.get());
+  }
+  ReleaseUnused();
+}
+
+void CDebugRenderer::CRenderer::CreateSubtitlesStyle()
+{
+  m_debugOverlayStyle = std::make_shared<KODI::SUBTITLES::STYLE::style>();
+  m_debugOverlayStyle->fontName = KODI::SUBTITLES::FONT_DEFAULT_FAMILYNAME;
+  m_debugOverlayStyle->fontSize = 20.0;
+  m_debugOverlayStyle->marginVertical = 12;
+}

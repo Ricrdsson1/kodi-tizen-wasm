@@ -1,0 +1,46 @@
+/*
+ *  Copyright (C) 2015-2018 Team Kodi
+ *  This file is part of Kodi - https://kodi.tv
+ *
+ *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  See LICENSES/README.md for more information.
+ */
+#include "UISoundsResource.h"
+
+#include "ServiceBroker.h"
+#include "addons/addoninfo/AddonType.h"
+#include "guilib/GUIAudioManager.h"
+#include "settings/Settings.h"
+#include "settings/SettingsComponent.h"
+
+#include <array>
+#include <string_view>
+
+namespace ADDON
+{
+
+CUISoundsResource::CUISoundsResource(const AddonInfoPtr& addonInfo)
+  : CResource(addonInfo, AddonType::RESOURCE_UISOUNDS)
+{
+}
+
+CResource::Published CUISoundsResource::PublishedFiles() const
+{
+  static constexpr std::array<std::string_view, 1> names{"sounds.xml"};
+  static constexpr std::array<std::string_view, 1> extensions{".wav"};
+  return {.names = names, .extensions = extensions};
+}
+
+bool CUISoundsResource::IsInUse() const
+{
+  return CServiceBroker::GetSettingsComponent()->GetSettings()->GetString(CSettings::SETTING_LOOKANDFEEL_SOUNDSKIN) == ID();
+}
+
+void CUISoundsResource::OnPostInstall(bool update, bool modal)
+{
+  CGUIComponent* gui = CServiceBroker::GetGUI();
+  if (IsInUse() && gui)
+    gui->GetAudioManager().Load();
+}
+
+}
