@@ -74,8 +74,8 @@ cmake -S "$KODI" -B "$WORK/build" \
       -DCMAKE_TOOLCHAIN_FILE="$TARGET/share/Toolchain.cmake" \
       -DCMAKE_BUILD_TYPE=Release -DCORE_PLATFORM_NAME=wasm \
       -DWASM_STATIC_ADDONS="$WORK/addons-src/pvr.iptvsimple" \
-      -DWASM_STATIC_ADDON_LIBRARIES=pugixml \
-      -DWASM_STATIC_ADDON_DEFINITIONS=IPTV_VERSION=$IPTVSIMPLE_VERSION
+      -DWASM_STATIC_ADDON_LIBRARIES_pvr.iptvsimple=pugixml \
+      -DWASM_STATIC_ADDON_DEFINITIONS_pvr.iptvsimple=IPTV_VERSION=$IPTVSIMPLE_VERSION
 make -C "$WORK/build" -j"$JOBS"
 
 "$KODI/tools/wasm/tizen/package.sh" "$WORK/build" $PROFILE

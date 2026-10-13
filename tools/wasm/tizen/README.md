@@ -11,7 +11,7 @@ It has been run on one TV only: a 2025 model on Tizen 9.0 (Chromium 120).
   (`xbmc/cores/VideoPlayer/MediaPipelineTizen.cpp`), with AAC, MP3, AC-3, E-AC-3 or
   Opus audio. Other video codecs are decoded in software, which is too slow for HD.
 * HLS, read through Kodi's file layer instead of FFmpeg's network code.
-* One binary add-on linked into the executable (see below).
+* Binary add-ons linked into the executable (see below).
 
 ## What does not
 
@@ -47,18 +47,22 @@ make -j$(getconf _NPROCESSORS_ONLN)
 
 ### Binary add-ons
 
-A browser cannot load a shared library, so a binary add-on has to be linked in at build
-time. Pass the add-on's source directory, the libraries it needs from the depends
-prefix and the definitions its own build would set:
+A browser cannot load a shared library, so binary add-ons have to be linked in at
+build time. List their source directories and, per add-on, the libraries it needs
+from the depends prefix and the definitions its own build would set:
 
 ```
--DWASM_STATIC_ADDONS=<path>/pvr.iptvsimple
--DWASM_STATIC_ADDON_LIBRARIES=pugixml
--DWASM_STATIC_ADDON_DEFINITIONS=IPTV_VERSION=22.6.5
+-DWASM_STATIC_ADDONS="<path>/pvr.iptvsimple;<path>/pvr.demo"
+-DWASM_STATIC_ADDON_LIBRARIES_pvr.iptvsimple=pugixml
+-DWASM_STATIC_ADDON_DEFINITIONS_pvr.iptvsimple=IPTV_VERSION=22.6.5
+-DWASM_STATIC_ADDON_LIBRARIES_pvr.demo=tinyxml2
 ```
 
 The libraries have to be built for `wasm32-unknown-emscripten` and installed into the
-depends prefix first. Only one add-on can be linked this way for now.
+depends prefix first. Each add-on is merged with its libraries into one object whose
+symbols, apart from the entry points, are made local
+(`tools/wasm/localize_symbols.py`), so add-ons do not collide with each other. An
+add-on that is not listed in `system/addon-manifest.xml` starts out disabled.
 
 ## Packaging
 
