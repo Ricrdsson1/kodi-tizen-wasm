@@ -792,6 +792,8 @@ const char* CAddonInfoBuilder::GetPlatformLibraryName(const tinyxml2::XMLElement
 #else
   libraryName = element->Attribute("library_osx");
 #endif
+#elif defined(TARGET_WASM)
+  libraryName = element->Attribute("library_wasm");
 #endif
 
   return libraryName;
@@ -872,6 +874,8 @@ bool CAddonInfoBuilder::PlatformSupportsAddon(const AddonInfoPtr& addon)
 #else
 #warning no architecture dependant platform tag
 #endif
+#elif defined(TARGET_WASM)
+    "wasm",
 #endif
   };
 

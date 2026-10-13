@@ -278,6 +278,32 @@
       }
     });
 
+    // A packaged TV app is loaded from file://, which fetch() refuses.
+    if (location.protocol === 'file:') {
+      var nativeFetch = window.fetch;
+      window.fetch = function (resource) {
+        var url = new URL(typeof resource === 'string' ? resource : resource.url, location.href);
+        if (url.protocol !== 'file:') return nativeFetch.apply(this, arguments);
+        return new Promise(function (resolve, reject) {
+          var xhr = new XMLHttpRequest();
+          xhr.open('GET', url.href);
+          xhr.responseType = 'arraybuffer';
+          xhr.onload = function () { resolve(new Response(xhr.response, { status: 200 })); };
+          xhr.onerror = function () { reject(new TypeError('Failed to load ' + url.href)); };
+          xhr.send();
+        });
+      };
+    }
+
+    // A Tizen TV only delivers these remote keys to apps that ask for them.
+    if (window.tizen && tizen.tvinputdevice) {
+      ['MediaPlay', 'MediaPause', 'MediaPlayPause', 'MediaStop', 'MediaRewind',
+       'MediaFastForward', 'MediaTrackPrevious', 'MediaTrackNext', 'ColorF0Red',
+       'ColorF1Green', 'ColorF2Yellow', 'ColorF3Blue', 'Info', 'Guide'].forEach(function (key) {
+        try { tizen.tvinputdevice.registerKey(key); } catch (e) { console.warn(e); }
+      });
+    }
+
     setStatusText('Downloading Kodi…');
     setProgress(null);
   </script>

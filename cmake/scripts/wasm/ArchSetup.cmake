@@ -63,6 +63,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     "SHELL:-sEXPORTED_RUNTIME_METHODS=ccall,cwrap"
     "SHELL:--pre-js ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/kodi_pre.js"
     "SHELL:--js-library ${CMAKE_SOURCE_DIR}/xbmc/windowing/wasm/webgl_commit.js"
+    "SHELL:--js-library ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/tizen/tizen_emss.js"
+    "SHELL:--js-library ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/network/wasm_http.js"
   )
 
   # ---------------------------------------------------------------------------
@@ -122,5 +124,6 @@ set(ENABLE_OPTICAL OFF CACHE BOOL "No optical drives in browser" FORCE)
 set(ENABLE_DVDCSS OFF CACHE BOOL "libdvdcss disabled for WASM" FORCE)
 set(ENABLE_AIRTUNES OFF CACHE BOOL "AirTunes not available in browser" FORCE)
 set(ENABLE_EVENTCLIENTS OFF CACHE BOOL "Event clients not used for WASM" FORCE)
+set(ENABLE_MICROHTTPD OFF CACHE STRING "A browser cannot accept connections" FORCE)
 set(ENABLE_INTERNAL_FFMPEG ON CACHE BOOL "No system FFmpeg for Emscripten" FORCE)
 

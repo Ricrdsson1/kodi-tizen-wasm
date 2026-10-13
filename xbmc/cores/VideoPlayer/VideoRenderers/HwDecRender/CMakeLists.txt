@@ -71,6 +71,11 @@ if("webos" IN_LIST CORE_PLATFORM_NAME_LC)
   list(APPEND HEADERS RendererStarfish.h)
 endif()
 
+if(CORE_SYSTEM_NAME STREQUAL wasm)
+  list(APPEND SOURCES RendererTizen.cpp)
+  list(APPEND HEADERS RendererTizen.h)
+endif()
+
 # we might want to build on linux systems
 # with ENABLE_VDPAU=OFF and ENABLE_VAAPI=OFF
 if(SOURCES)

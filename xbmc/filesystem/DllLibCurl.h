@@ -21,6 +21,10 @@
 #include <curl/curl.h>
 #undef CURL
 
+#ifdef TARGET_WASM
+#include "platform/wasm/network/CurlWasm.h"
+#endif
+
 namespace XCURL
 {
 

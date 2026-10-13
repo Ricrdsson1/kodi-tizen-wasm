@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets"
+        xmlns:tizen="http://tizen.org/ns/widgets"
+        id="https://kodi.tv/tizen"
+        version="@APP_VERSION@"
+        viewmodes="maximized">
+    <tizen:application id="KodiWasmTv.Kodi" package="KodiWasmTv" required_version="5.5"/>
+    <content src="index.html"/>
+    <name>Kodi</name>
+    <description>Kodi media center (WebAssembly)</description>
+    <icon src="icon.png"/>
+    <access origin="*" subdomains="true"/>
+    <tizen:content-security-policy>*</tizen:content-security-policy>
+    <feature name="http://tizen.org/feature/screen.size.all"/>
+    <tizen:privilege name="http://tizen.org/privilege/internet"/>
+    <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
+    <tizen:profile name="tv"/>
+    <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable"
+                   encryption="disable" install-location="auto" hwkey-event="enable"/>
+</widget>
