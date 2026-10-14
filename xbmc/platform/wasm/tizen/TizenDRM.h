@@ -38,15 +38,22 @@ extern "C"
 {
 /*!
  * \brief Create a session and ask it for a license request.
+ *
+ * The Tizen WASM Player fails when the keys of a stream are spread over several
+ * sessions, so if a session of the key system already holds the usable key keyId, the
+ * handle shares that session instead: no request is issued and usableKeys is set at once.
+ *
  * \param state has to stay valid until tizen_drm_close()
  * \param initDataType "cenc", "keyids" or "webm"
+ * \param keyId the 16 byte key the session is for, or nullptr
  * \return a handle, or 0 if the key system is not available
  */
 int tizen_drm_open(TizenDrmState* state,
                    const char* keySystem,
                    const char* initDataType,
                    const uint8_t* initData,
-                   int initDataSize);
+                   int initDataSize,
+                   const uint8_t* keyId);
 
 /*!
  * \brief Copy the oldest license request that was not read yet.
@@ -62,4 +69,12 @@ int tizen_drm_read_message(int handle, uint8_t* buffer, int capacity);
 void tizen_drm_update(int handle, const uint8_t* response, int size);
 
 void tizen_drm_close(int handle);
+
+/*!
+ * \brief Copy the id of a key that is usable in the session of a handle: the key it
+ * was opened for if that is usable, otherwise any.
+ * \param keyId receives 16 bytes
+ * \return 1, or 0 if the session holds no usable key
+ */
+int tizen_drm_usable_key_id(int handle, uint8_t* keyId);
 }

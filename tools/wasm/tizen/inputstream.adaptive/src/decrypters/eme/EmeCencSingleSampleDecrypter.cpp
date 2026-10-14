@@ -29,7 +29,8 @@ int tizen_drm_open(TizenDrmState* state,
                    const char* keySystem,
                    const char* initDataType,
                    const uint8_t* initData,
-                   int initDataSize);
+                   int initDataSize,
+                   const uint8_t* keyId);
 int tizen_drm_read_message(int handle, uint8_t* buffer, int capacity);
 void tizen_drm_update(int handle, const uint8_t* response, int size);
 void tizen_drm_close(int handle);
@@ -88,7 +89,8 @@ SResult CEmeCencSingleSampleDecrypter::CreateSession(const std::vector<uint8_t>&
 
   m_pssh = pssh;
   m_handle = tizen_drm_open(&m_state, m_config.keySystem.c_str(), "cenc", m_pssh.data(),
-                            static_cast<int>(m_pssh.size()));
+                            static_cast<int>(m_pssh.size()),
+                            m_defaultKeyId.size() == 16 ? m_defaultKeyId.data() : nullptr);
   if (!m_handle)
   {
     LOG::LogF(LOGERROR, "The browser has no %s", m_config.keySystem.c_str());
@@ -96,6 +98,14 @@ SResult CEmeCencSingleSampleDecrypter::CreateSession(const std::vector<uint8_t>&
   }
   m_sessionId = std::to_string(m_handle);
   LOG::Log(LOGDEBUG, "Session ID: %s", m_sessionId.c_str());
+
+  // The key came with the license of an earlier session, which this one shares.
+  if (m_state.usableKeys > 0)
+  {
+    LOG::Log(LOGDEBUG, "Sharing the browser session that holds the key, usable keys: %d",
+             m_state.usableKeys.load());
+    return SResult::Ok();
+  }
 
   for (int round = 0; round < MAX_LICENSE_ROUNDS; ++round)
   {

@@ -57,6 +57,16 @@ mergeInto(LibraryManager.library, {
     },
 
     // Result of tizen_emss_append() for an exception of appendPacketSync().
+    // Adds the TizenEmssFrameInfo at frame, if any, to a packet.
+    frameInfo: function(packet, frame) {
+      if (!frame) return packet;
+      packet.width = HEAP32[frame >> 2];
+      packet.height = HEAP32[(frame + 4) >> 2];
+      packet.framerateNum = HEAP32[(frame + 8) >> 2];
+      packet.framerateDen = HEAP32[(frame + 12) >> 2];
+      return packet;
+    },
+
     appendError: function(e) {
       switch (e && e.name) {
         case 'AppendBufferFullError':
@@ -454,17 +464,17 @@ mergeInto(LibraryManager.library, {
   // Returns 0 appended, 1 buffer full (retry), 2 track not accepting data (retry
   // after it reopens), 3 packet dropped by the platform, 4 fatal.
   tizen_emss_append__deps: ['$TizenEmss'],
-  tizen_emss_append__sig: 'iipidddii',
-  tizen_emss_append: function(trackId, data, size, pts, dts, duration, keyFrame, sessionId) {
+  tizen_emss_append__sig: 'iipidddiip',
+  tizen_emss_append: function(trackId, data, size, pts, dts, duration, keyFrame, sessionId, frame) {
     try {
-      tizentvwasm.SideThreadElementaryMediaTrack.appendPacketSync(trackId, {
+      tizentvwasm.SideThreadElementaryMediaTrack.appendPacketSync(trackId, TizenEmss.frameInfo({
         pts: pts,
         dts: dts,
         duration: duration,
         isKeyFrame: keyFrame !== 0,
         isEncrypted: false,
         sessionId: sessionId,
-      }, HEAPU8.subarray(data, data + size));
+      }, frame), HEAPU8.subarray(data, data + size));
       return 0;
     } catch (e) {
       return TizenEmss.appendError(e);
@@ -475,9 +485,10 @@ mergeInto(LibraryManager.library, {
   // bytes each; subsamples holds subsampleCount pairs of clear and encrypted byte
   // counts as 32 bit integers.
   tizen_emss_append_encrypted__deps: ['$TizenEmss'],
-  tizen_emss_append_encrypted__sig: 'iipidddiipppii',
+  tizen_emss_append_encrypted__sig: 'iipidddiipppiip',
   tizen_emss_append_encrypted: function(trackId, data, size, pts, dts, duration, keyFrame,
-                                        sessionId, keyId, iv, subsamples, subsampleCount, cbcs) {
+                                        sessionId, keyId, iv, subsamples, subsampleCount, cbcs,
+                                        frame) {
     var subs = [];
     for (var i = 0; i < subsampleCount; i++) {
       subs.push({
@@ -486,7 +497,7 @@ mergeInto(LibraryManager.library, {
       });
     }
     try {
-      tizentvwasm.SideThreadElementaryMediaTrack.appendPacketSync(trackId, {
+      tizentvwasm.SideThreadElementaryMediaTrack.appendPacketSync(trackId, TizenEmss.frameInfo({
         pts: pts,
         dts: dts,
         duration: duration,
@@ -497,7 +508,7 @@ mergeInto(LibraryManager.library, {
         initializationVector: HEAPU8.slice(iv, iv + 16),
         encryptionMode: cbcs ? 'cbcs' : 'cenc',
         subsamples: subs,
-      }, HEAPU8.subarray(data, data + size));
+      }, frame), HEAPU8.subarray(data, data + size));
       return 0;
     } catch (e) {
       return TizenEmss.appendError(e);
