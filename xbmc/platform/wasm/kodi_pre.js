@@ -37,6 +37,46 @@
       }
     };
 
+    // Downloads, unpacked add-on packages and cached thumbnails are not kept: storing a
+    // package that is still being downloaded over and over can use up the memory of a
+    // TV, and its storage is small (80 MB on a 2025 Samsung), too small for the artwork
+    // of a library or an EPG. Left out of the profile on disk, they are deleted from it
+    // with the next flush and not loaded again. The texture database goes with the
+    // thumbnails, as it would otherwise point to files that are gone.
+    var TRANSIENT = ['/temp', '/addons/packages', '/addons/temp', '/userdata/Thumbnails']
+        .map(function (dir) { return PROFILE_PATH + dir; });
+    var TEXTURE_DB = PROFILE_PATH + '/userdata/Database/Textures';
+    function isTransient(path) {
+      return path.startsWith(TEXTURE_DB) || TRANSIENT.some(function (dir) {
+        return path === dir || path.startsWith(dir + '/');
+      });
+    }
+    function withoutTransient(getSet, filter) {
+      return function (mount, callback) {
+        return getSet.call(IDBFS, mount, function (err, set) {
+          if (!err && filter()) {
+            Object.keys(set.entries).filter(isTransient).forEach(function (path) {
+              delete set.entries[path];
+            });
+          }
+          callback(err, set);
+        });
+      };
+    }
+    var populating = false;
+    IDBFS.getLocalSet = withoutTransient(IDBFS.getLocalSet, function () { return true; });
+    IDBFS.getRemoteSet = withoutTransient(IDBFS.getRemoteSet, function () { return populating; });
+
+    // What the storage holds, for Kodi to tell whether an add-on still fits.
+    function updateStorageEstimate() {
+      if (typeof navigator === 'undefined' || !navigator.storage || !navigator.storage.estimate) {
+        return;
+      }
+      navigator.storage.estimate().then(function (estimate) {
+        globalThis.kodiStorage = { quota: estimate.quota, usage: estimate.usage };
+      }, function () {});
+    }
+
     try {
       FS.mount(IDBFS, {}, PROFILE_PATH);
     } catch (e) {
@@ -52,7 +92,8 @@
       syncing = true;
       FS.syncfs(false, function (err) {
         syncing = false;
-        if (err) { console.warn('[kodi] IDBFS persist:', err); }
+        if (err) { console.warn('[kodi] IDBFS persist:', err.name || err, err.message || ''); }
+        updateStorageEstimate();
         if (pending) { pending = false; flushToIdb(); }
       });
     }
@@ -60,7 +101,10 @@
     // Block main() until the profile has been loaded from IndexedDB. A flush
     // before then would delete whatever has not been loaded yet.
     addRunDependency('kodi-idbfs-populate');
+    populating = true;
     FS.syncfs(true, function (err) {
+      populating = false;
+      updateStorageEstimate();
       removeRunDependency('kodi-idbfs-populate');
       if (err) {
         console.warn('[kodi] IDBFS populate failed, profile will not persist:', err);

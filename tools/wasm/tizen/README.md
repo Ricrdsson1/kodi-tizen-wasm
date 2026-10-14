@@ -34,6 +34,10 @@ It has been run on one TV only: a 2025 model on Tizen 9.0 (Chromium 120).
   video: the video plays without sound.
 * `User-Agent`, `Cookie` and `Referer` request headers, which a browser does not let a
   page set.
+* Large add-ons, such as most skins other than Confluence: the TV gives the app 80 MB
+  of storage, and Kodi keeps all of its files in memory as well. An add-on that does
+  not fit is refused before it is downloaded. For the same reason thumbnails are
+  cached only until the app is closed.
 
 ## Building
 

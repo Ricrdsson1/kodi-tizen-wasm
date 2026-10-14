@@ -36,4 +36,13 @@ bool GetSystemMemory(uint64_t& total, uint64_t& available);
  * \return -1 if unknown
  */
 int GetSystemCpuLoad();
+
+/*!
+ * \brief Whether an add-on package of the given size can be downloaded and unpacked.
+ *
+ * Kodi's files are held in the memory of the browser and copied into its storage, which
+ * can be small, so a package that does not fit would make the browser stop Kodi.
+ * \return true if it fits or nothing is known about the space
+ */
+bool HasRoomForAddonPackage(uint64_t packageSize);
 } // namespace KODI::PLATFORM::WASM

@@ -648,4 +648,10 @@ private:
   bool Reset();
 
   std::set<ISubSettings*> m_subSettings;
+
+#if defined(TARGET_WASM)
+  //! What Save(file) wrote last
+  mutable std::string m_savedFile;
+  mutable std::string m_savedXml;
+#endif
 };

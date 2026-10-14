@@ -8,6 +8,8 @@
 
 #include "SystemInfoWasm.h"
 
+#include "utils/log.h"
+
 #include <cstdlib>
 
 #include <emscripten.h>
@@ -102,6 +104,41 @@ int GetSystemCpuLoad()
     return state.load;
   });
   return load < 0 ? -1 : static_cast<int>(load * 100.0 + 0.5);
+}
+
+bool HasRoomForAddonPackage(uint64_t packageSize)
+{
+  // Unpacked, skins took up to 1.7 times the size of their package.
+  const uint64_t unpacked = packageSize * 7 / 4;
+
+  // Kept up to date by kodi_pre.js each time the profile is stored.
+  const double quota = MAIN_THREAD_EM_ASM_DOUBLE({
+    var storage = globalThis.kodiStorage;
+    return storage ? storage.quota : -1;
+  });
+  const double usage = MAIN_THREAD_EM_ASM_DOUBLE({
+    var storage = globalThis.kodiStorage;
+    return storage ? storage.usage : -1;
+  });
+  if (quota > 0 && usage >= 0 && usage + unpacked > quota)
+  {
+    CLog::Log(LOGERROR, "{}: {} bytes would be stored, {:.0f} of {:.0f} are in use", __FUNCTION__,
+              unpacked, usage, quota);
+    return false;
+  }
+
+  // Installing holds the package and the unpacked files in memory, and storing them
+  // copies the files once more.
+  constexpr uint64_t reserve = 64 * 1024 * 1024;
+  uint64_t total;
+  uint64_t available;
+  if (GetSystemMemory(total, available) && packageSize + 2 * unpacked + reserve > available)
+  {
+    CLog::Log(LOGERROR, "{}: a package of {} bytes needs more than the {} bytes of free memory",
+              __FUNCTION__, packageSize, available);
+    return false;
+  }
+  return true;
 }
 
 } // namespace KODI::PLATFORM::WASM

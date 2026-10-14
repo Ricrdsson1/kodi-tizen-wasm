@@ -46,6 +46,10 @@
 #include "utils/XTimeUtils.h"
 #include "utils/log.h"
 
+#if defined(TARGET_WASM)
+#include "platform/wasm/SystemInfoWasm.h"
+#endif
+
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -792,6 +796,18 @@ bool CAddonInstallJob::DoWork()
         }
       }
 
+#if defined(TARGET_WASM)
+      if (!CFile::Exists(package) &&
+          !KODI::PLATFORM::WASM::HasRoomForAddonPackage(m_addon->PackageSize()))
+      {
+        CLog::Log(LOGERROR, "CAddonInstallJob[{}]: no room for {}", m_addon->ID(), package);
+        ReportInstallError(
+            m_addon->ID(), URIUtils::GetFileName(package),
+            CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(13331));
+        return false;
+      }
+#endif
+
       // zip passed in - download + extract
       if (!CFile::Exists(package) && !DownloadPackage(path, packagePath))
       {
@@ -855,6 +871,17 @@ bool CAddonInstallJob::DoWork()
   // perform install
   if (!Install(installFrom, m_repo))
     return false;
+
+#if defined(TARGET_WASM)
+  // The package cache would stay in memory.
+  if (URIUtils::PathHasParent(installFrom, "special://home/addons/packages/"))
+  {
+    CAddonDatabase db;
+    if (db.Open())
+      db.RemovePackage(installFrom);
+    CFile::Delete(installFrom);
+  }
+#endif
 
   // Load new installed and if succeeded replace defined m_addon here with new one
   if (!CServiceBroker::GetAddonMgr().LoadAddon(m_addon->ID(), m_addon->Origin(),

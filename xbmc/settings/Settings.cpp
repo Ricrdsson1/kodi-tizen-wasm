@@ -162,7 +162,22 @@ bool CSettings::Save(const std::string& file) const
   if (!Save(root))
     return false;
 
+#if defined(TARGET_WASM)
+  // Saved over and over (see CApplication::WasmRunIteration()), so the file is only
+  // written when something has changed.
+  TiXmlPrinter printer;
+  xmlDoc.Accept(&printer);
+  std::unique_lock lock(m_critical);
+  if (file == m_savedFile && printer.Str() == m_savedXml)
+    return true;
+  if (!xmlDoc.SaveFile(file))
+    return false;
+  m_savedFile = file;
+  m_savedXml = printer.Str();
+  return true;
+#else
   return xmlDoc.SaveFile(file);
+#endif
 }
 
 bool CSettings::Save(TiXmlNode* root) const

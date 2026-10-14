@@ -1490,6 +1490,17 @@ void CApplication::WasmRunIteration()
   if (!m_bStop)
   {
     RunIteration();
+
+    // A TV ends the app without letting it shut down, which is when the settings are
+    // saved otherwise.
+    static auto nextSave = std::chrono::steady_clock::now() + 5s;
+    if (std::chrono::steady_clock::now() >= nextSave)
+    {
+      nextSave = std::chrono::steady_clock::now() + 5s;
+      const auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
+      if (settings && settings->IsLoaded())
+        settings->Save();
+    }
     return;
   }
 
