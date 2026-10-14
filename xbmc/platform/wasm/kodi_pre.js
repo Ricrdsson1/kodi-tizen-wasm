@@ -21,6 +21,22 @@
       console.warn('[kodi] mkdirTree ' + PROFILE_PATH + ':', e);
     }
 
+    // A file that cannot grow because the browser is out of memory must fail the write
+    // like a full disk would. An exception other than an FS error is not caught by the
+    // system call, and then the thread that waits for its result never wakes up.
+    var expandFileStorage = MEMFS.expandFileStorage;
+    MEMFS.expandFileStorage = function (node, newCapacity) {
+      try {
+        return expandFileStorage.call(MEMFS, node, newCapacity);
+      } catch (e) {
+        if (e instanceof RangeError) {
+          console.warn('[kodi] out of memory growing a file to ' + newCapacity + ' bytes');
+          throw new FS.ErrnoError(51); // ENOSPC
+        }
+        throw e;
+      }
+    };
+
     try {
       FS.mount(IDBFS, {}, PROFILE_PATH);
     } catch (e) {
