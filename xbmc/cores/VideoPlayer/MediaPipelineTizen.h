@@ -21,6 +21,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 class CBitstreamConverter;
 class CDVDClock;
@@ -134,6 +135,9 @@ private:
   CDVDStreamInfo m_videoHint;
   VideoPicture m_picture{};
   double m_frameDuration{0.04}; // seconds
+  TizenEmssFrameInfo m_frameInfo{};
+  //! A key of the audio DRM session, for the clear lead of encrypted audio; empty if none
+  std::vector<uint8_t> m_audioClearLeadKey;
   std::unique_ptr<CBitstreamConverter> m_bitstream;
   const DemuxPacket* m_convertedPacket{nullptr};
   // Set once the demuxer has flagged a key frame; until then they are looked for here.

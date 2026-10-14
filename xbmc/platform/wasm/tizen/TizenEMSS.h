@@ -95,6 +95,18 @@ int tizen_emss_validate_audio(const char* mime,
                               const char* channelLayout,
                               int sampleRate);
 int tizen_emss_open(TizenEmssState* state, const TizenEmssConfig* config);
+
+/*!
+ * \brief Size and frame rate of a video packet, which the TV reads from every one.
+ * nullptr for audio, and for encrypted video, which stalls with them.
+ */
+struct TizenEmssFrameInfo
+{
+  int32_t width;
+  int32_t height;
+  int32_t framerateNum;
+  int32_t framerateDen;
+};
 void tizen_emss_close(void);
 void tizen_emss_play(void);
 void tizen_emss_pause(void);
@@ -108,7 +120,8 @@ int tizen_emss_append(int trackId,
                       double dts,
                       double duration,
                       int keyFrame,
-                      int sessionId);
+                      int sessionId,
+                      const TizenEmssFrameInfo* frame);
 int tizen_emss_append_encrypted(int trackId,
                                 const uint8_t* data,
                                 int size,
@@ -121,7 +134,8 @@ int tizen_emss_append_encrypted(int trackId,
                                 const uint8_t* iv,
                                 const uint32_t* subsamples,
                                 int subsampleCount,
-                                int cbcs);
+                                int cbcs,
+                                const TizenEmssFrameInfo* frame);
 void tizen_emss_set_media_keys(int videoSession, int audioSession);
 void tizen_emss_end_of_track(int trackId, int sessionId);
 }

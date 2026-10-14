@@ -13,11 +13,17 @@ It has been run on one TV only: a 2025 model on Tizen 9.0 (Chromium 120).
 * HLS, read through Kodi's file layer instead of FFmpeg's network code.
 * Unencrypted DASH through InputStream Adaptive, including changes of quality while
   playing.
-* Widevine protected video, experimentally: a decrypter added to InputStream Adaptive
-  (`tools/wasm/tizen/inputstream.adaptive`) runs the license exchange through the
-  browser's Encrypted Media Extensions, and the TV decrypts the packets. Encrypted
-  audio does not play yet: the TV reports an audio decode error. PlayReady is wired
-  up the same way but untested.
+* Widevine protected streams, experimentally and not watchable yet: a decrypter added
+  to InputStream Adaptive (`tools/wasm/tizen/inputstream.adaptive`) runs the license
+  exchange through the browser's Encrypted Media Extensions, and the TV decrypts the
+  packets. Audio plays, but the picture stutters and jumps as soon as it is encrypted,
+  although the packets decrypt correctly (checked against the Axinom test vectors).
+  The TV refuses `ElementaryMediaTrack.setMediaKeySession()` for Widevine and
+  PlayReady alike, so the keys are attached to the media element instead. The TV also
+  fails when the keys of a stream are spread over several sessions, so a stream whose
+  key came with an earlier license shares that session, and when encrypted audio
+  follows clear audio, so the clear lead of encrypted audio is passed as encrypted
+  packets without encrypted bytes.
 * Binary add-ons linked into the executable (see below).
 
 ## What does not

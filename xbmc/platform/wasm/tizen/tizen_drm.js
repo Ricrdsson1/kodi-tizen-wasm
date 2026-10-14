@@ -41,6 +41,30 @@ mergeInto(LibraryManager.library, {
       return entry ? entry.session : null;
     },
 
+    usable: function(session) {
+      var usable = 0;
+      session.keyStatuses.forEach(function(status) {
+        if (status === 'usable') usable++;
+      });
+      return usable;
+    },
+
+    // An open session of the key system for which the key is usable.
+    holder: function(system, keyId) {
+      for (var handle in TizenDrm.sessions) {
+        var entry = TizenDrm.sessions[handle];
+        if (entry.closed || !entry.session || entry.system !== system) continue;
+        var found = false;
+        entry.session.keyStatuses.forEach(function(status, id) {
+          var bytes = new Uint8Array(id.buffer ? id.buffer.slice(id.byteOffset, id.byteOffset + id.byteLength) : id);
+          if (status === 'usable' && bytes.length === 16 && bytes.every(function(b, i) { return b === keyId[i]; }))
+            found = true;
+        });
+        if (found) return entry;
+      }
+      return null;
+    },
+
     // The MediaKeys the session of a handle belongs to.
     keys: function(handle) {
       var entry = TizenDrm.sessions[handle];
@@ -50,16 +74,32 @@ mergeInto(LibraryManager.library, {
 
   tizen_drm_open__deps: ['$TizenDrm'],
   tizen_drm_open__proxy: 'sync',
-  tizen_drm_open__sig: 'ippppi',
-  tizen_drm_open: function(statePtr, keySystem, initDataType, initData, initDataSize) {
+  tizen_drm_open__sig: 'ippppip',
+  tizen_drm_open: function(statePtr, keySystem, initDataType, initData, initDataSize, keyId) {
     if (!navigator.requestMediaKeySystemAccess) return 0;
 
     var handle = TizenDrm.nextHandle++;
-    var entry = { statePtr: statePtr, session: null, mediaKeys: null, messages: [], closed: false };
-    TizenDrm.sessions[handle] = entry;
-
     var type = UTF8ToString(initDataType);
     var system = UTF8ToString(keySystem);
+
+    var key = keyId ? HEAPU8.slice(keyId, keyId + 16) : null;
+    var owner = key ? TizenDrm.holder(system, key) : null;
+    if (owner) {
+      owner.shared.refs++;
+      TizenDrm.sessions[handle] = {
+        statePtr: statePtr, system: system, keyId: key, session: owner.session,
+        mediaKeys: owner.mediaKeys, shared: owner.shared, messages: [], closed: false,
+      };
+      Atomics.store(HEAP32, (statePtr + TizenDrm.OFF_USABLE_KEYS) >> 2, TizenDrm.usable(owner.session));
+      return handle;
+    }
+
+    var entry = {
+      statePtr: statePtr, system: system, keyId: key, session: null, mediaKeys: null,
+      shared: { refs: 1 }, messages: [], closed: false,
+    };
+    TizenDrm.sessions[handle] = entry;
+
     // Views on shared memory are refused; the init data is copied out.
     var data = HEAPU8.slice(initData, initData + initDataSize);
     var config = [{
@@ -86,11 +126,7 @@ mergeInto(LibraryManager.library, {
         TizenDrm.add(entry, TizenDrm.OFF_MESSAGES);
       });
       session.addEventListener('keystatuseschange', function() {
-        var usable = 0;
-        session.keyStatuses.forEach(function(status) {
-          if (status === 'usable') usable++;
-        });
-        TizenDrm.store(entry, TizenDrm.OFF_USABLE_KEYS, usable);
+        TizenDrm.store(entry, TizenDrm.OFF_USABLE_KEYS, TizenDrm.usable(session));
       });
       return session.generateRequest(type, data);
     }).catch(function(e) {
@@ -126,6 +162,25 @@ mergeInto(LibraryManager.library, {
     });
   },
 
+  tizen_drm_usable_key_id__deps: ['$TizenDrm'],
+  tizen_drm_usable_key_id__proxy: 'sync',
+  tizen_drm_usable_key_id__sig: 'iip',
+  tizen_drm_usable_key_id: function(handle, keyId) {
+    var entry = TizenDrm.sessions[handle];
+    if (!entry || !entry.session) return 0;
+    // Preferably the key the session was opened for, the one of the stream.
+    var found = null;
+    entry.session.keyStatuses.forEach(function(status, id) {
+      var bytes = new Uint8Array(id.buffer ? id.buffer.slice(id.byteOffset, id.byteOffset + id.byteLength) : id);
+      if (status !== 'usable' || bytes.length !== 16) return;
+      var own = entry.keyId && bytes.every(function(b, i) { return b === entry.keyId[i]; });
+      if (own || !found) found = bytes;
+    });
+    if (!found) return 0;
+    HEAPU8.set(found, keyId);
+    return 1;
+  },
+
   tizen_drm_close__deps: ['$TizenDrm'],
   tizen_drm_close__proxy: 'sync',
   tizen_drm_close__sig: 'vi',
@@ -135,6 +190,7 @@ mergeInto(LibraryManager.library, {
     delete TizenDrm.sessions[handle];
     entry.closed = true;
     entry.statePtr = 0;
+    if (--entry.shared.refs > 0) return;
     if (entry.session) entry.session.close().catch(function() {});
   },
 });

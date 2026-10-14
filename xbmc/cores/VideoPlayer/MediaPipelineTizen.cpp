@@ -18,6 +18,7 @@
 #include "Process/ProcessInfo.h"
 #include "ServiceBroker.h"
 #include "VideoRenderers/RenderManager.h"
+#include "platform/wasm/tizen/TizenDRM.h"
 #include "cores/AudioEngine/Utils/AEUtil.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
@@ -358,6 +359,8 @@ bool CMediaPipelineTizen::OpenVideoStream(CDVDStreamInfo hint)
     {
       std::unique_lock lock(m_videoFeedMutex);
       m_videoHint = hint;
+      m_frameInfo.width = hint.width;
+      m_frameInfo.height = hint.height;
       SetupBitstreamConverter();
       m_processInfo.SetVideoDimensions(hint.width, hint.height);
       return true;
@@ -537,6 +540,7 @@ bool CMediaPipelineTizen::Load()
   }
   const double fps = static_cast<double>(fpsRate) / fpsScale;
   m_frameDuration = 1.0 / fps;
+  m_frameInfo = {m_videoHint.width, m_videoHint.height, fpsRate, fpsScale};
 
   const std::string videoMime = VideoMime(m_videoHint);
   m_configWidth = std::max(m_videoHint.width, MIN_CONFIG_WIDTH);
@@ -599,6 +603,14 @@ bool CMediaPipelineTizen::Load()
              audioMime ? audioMime : "none", config.duration);
 
   tizen_emss_set_media_keys(DrmSession(m_videoHint), audioMime ? DrmSession(m_audioHint) : 0);
+
+  m_audioClearLeadKey.clear();
+  if (audioMime && DrmSession(m_audioHint))
+  {
+    m_audioClearLeadKey.resize(16);
+    if (!tizen_drm_usable_key_id(DrmSession(m_audioHint), m_audioClearLeadKey.data()))
+      m_audioClearLeadKey.clear();
+  }
   if (!tizen_emss_open(&m_state, &config))
   {
     CLog::LogF(LOGERROR, "The Tizen WASM Player did not open");
@@ -747,6 +759,8 @@ bool CMediaPipelineTizen::Append(const int trackId,
                                                 : (trackId == m_state.videoTrack ? m_frameDuration
                                                                                  : 0.02);
 
+  const TizenEmssFrameInfo* frame = trackId == m_state.videoTrack ? &m_frameInfo : nullptr;
+
   int result;
   const DEMUX_CRYPTO_INFO* crypto = packet.cryptoInfo;
   if (crypto && crypto->numSubSamples > 0)
@@ -762,11 +776,23 @@ bool CMediaPipelineTizen::Append(const int trackId,
     result = tizen_emss_append_encrypted(
         trackId, data, size, pts, dts, duration, keyFrame ? 1 : 0, m_state.sessionId, crypto->kid,
         crypto->iv, subsamples.data(), static_cast<int>(crypto->numSubSamples),
-        crypto->mode == 2 ? 1 : 0);
+        crypto->mode == 2 ? 1 : 0, nullptr /* the TV stalls on encrypted video with it */);
+  }
+  else if (trackId == m_state.audioTrack && !m_audioClearLeadKey.empty())
+  {
+    // The audio decoder of the TV fails when encrypted packets follow clear ones, so the
+    // clear lead of encrypted audio is passed as encrypted packets without encrypted
+    // bytes. The key does not matter, but has to be one the session holds.
+    static const uint8_t iv[16] = {};
+    const uint32_t subsample[2] = {static_cast<uint32_t>(size), 0};
+    result = tizen_emss_append_encrypted(trackId, data, size, pts, dts, duration,
+                                         keyFrame ? 1 : 0, m_state.sessionId,
+                                         m_audioClearLeadKey.data(), iv, subsample, 1, 0,
+                                         nullptr);
   }
   else
     result = tizen_emss_append(trackId, data, size, pts, dts, duration, keyFrame ? 1 : 0,
-                               m_state.sessionId);
+                               m_state.sessionId, frame);
 
   switch (result)
   {
