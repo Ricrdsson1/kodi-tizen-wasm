@@ -8,6 +8,8 @@
 
 #include "utils/MemUtils.h"
 
+#include "SystemInfoWasm.h"
+
 #include <cstdint>
 #include <cstdlib>
 
@@ -40,6 +42,16 @@ void GetMemoryStatus(MemoryStatus* buffer)
 {
   if (!buffer)
     return;
+
+  // The device, where it says: the heap below is only Kodi's share of it.
+  uint64_t total = 0;
+  uint64_t available = 0;
+  if (KODI::PLATFORM::WASM::GetSystemMemory(total, available))
+  {
+    buffer->totalPhys = total;
+    buffer->availPhys = available;
+    return;
+  }
 
   // Safe to widen to 64 bits: Emscripten's getHeapMax() caps this below 4GB
   // on non-MEMORY64 builds (see the MAXIMUM_MEMORY comment in ArchSetup.cmake),

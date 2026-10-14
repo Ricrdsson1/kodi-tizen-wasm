@@ -50,6 +50,9 @@ using namespace winrt::Windows::System::Profile;
 #if defined(TARGET_DARWIN)
 #include "platform/darwin/DarwinUtils.h"
 #endif
+#if defined(TARGET_WASM)
+#include "platform/wasm/SystemInfoWasm.h"
+#endif
 #include "powermanagement/PowerManager.h"
 #include "utils/StringUtils.h"
 #include "utils/XMLUtils.h"
@@ -698,6 +701,8 @@ std::string CSysInfo::GetOsName(bool emptyIfUnknown /* = false*/)
       osName = "Android";
 #elif defined(TARGET_WEBOS)
     osName = "webOS";
+#elif defined(TARGET_WASM)
+    osName = KODI::PLATFORM::WASM::GetSystemCapability("http://tizen.org/system/platform.name");
 #elif defined(TARGET_LINUX)
     osName = getValueFromOs_release("NAME");
     if (osName.empty())
@@ -741,6 +746,9 @@ std::string CSysInfo::GetOsVersion(void)
     else if (osVersion.find('.', pointPos + 1) == std::string::npos)
       osVersion += ".0";
   }
+#elif defined(TARGET_WASM)
+  osVersion =
+      KODI::PLATFORM::WASM::GetSystemCapability("http://tizen.org/feature/platform.version");
 #elif defined(TARGET_LINUX)
   osVersion = getValueFromOs_release("VERSION_ID");
   if (osVersion.empty())
@@ -828,6 +836,9 @@ std::string CSysInfo::GetOsPrettyNameWithVersion(void)
 #elif defined(TARGET_ANDROID)
   osNameVer =
       GetOsName() + " " + GetOsVersion() + " API level " + std::to_string(CJNIBuild::SDK_INT);
+#elif defined(TARGET_WASM)
+  if (!GetOsName(true).empty())
+    osNameVer = GetOsName() + " " + GetOsVersion();
 #elif defined(TARGET_LINUX)
   osNameVer = getValueFromOs_release("PRETTY_NAME");
   if (osNameVer.empty())
@@ -867,6 +878,8 @@ std::string CSysInfo::GetManufacturerName(void)
     auto eas = EasClientDeviceInformation();
     auto manufacturer = eas.SystemManufacturer();
     g_charsetConverter.wToUTF8(std::wstring(manufacturer.c_str()), manufName);
+#elif defined(TARGET_WASM)
+    manufName = KODI::PLATFORM::WASM::GetSystemCapability("http://tizen.org/system/manufacturer");
 #elif defined(TARGET_LINUX)
 
     auto cpuInfo = CServiceBroker::GetCPUInfo();
@@ -906,6 +919,8 @@ std::string CSysInfo::GetModelName(void)
     auto eas = EasClientDeviceInformation();
     auto manufacturer = eas.SystemProductName();
     g_charsetConverter.wToUTF8(std::wstring(manufacturer.c_str()), modelName);
+#elif defined(TARGET_WASM)
+    modelName = KODI::PLATFORM::WASM::GetSystemCapability("http://tizen.org/system/model_name");
 #elif defined(TARGET_LINUX)
     auto cpuInfo = CServiceBroker::GetCPUInfo();
     modelName = cpuInfo->GetCPUHardware();

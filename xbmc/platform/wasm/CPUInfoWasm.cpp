@@ -8,6 +8,11 @@
 
 #include "CPUInfoWasm.h"
 
+#include "SystemInfoWasm.h"
+#include "utils/StringUtils.h"
+
+#include <cstdlib>
+
 #include <emscripten.h>
 
 std::shared_ptr<CCPUInfo> CCPUInfo::GetCPUInfo()
@@ -25,7 +30,12 @@ CCPUInfoWasm::CCPUInfoWasm()
     return 1;
   });
 
-  m_cpuModel = "WebAssembly";
+  // A Tizen TV names the architecture, e.g. "armv7".
+  std::string arch =
+      KODI::PLATFORM::WASM::GetSystemCapability("http://tizen.org/feature/platform.core.cpu.arch");
+  if (StringUtils::StartsWith(arch, "arm"))
+    arch = "ARM" + arch.substr(3);
+  m_cpuModel = arch.empty() ? "WebAssembly" : arch;
 
   for (int core = 0; core < m_cpuCount; core++)
   {
@@ -35,12 +45,27 @@ CCPUInfoWasm::CCPUInfoWasm()
   }
 }
 
+bool CCPUInfoWasm::SupportsCPUUsage() const
+{
+  return KODI::PLATFORM::WASM::GetSystemCpuLoad() >= 0;
+}
+
 int CCPUInfoWasm::GetUsedPercentage()
 {
-  return 0;
+  const int load = KODI::PLATFORM::WASM::GetSystemCpuLoad();
+  if (load < 0)
+    return 0;
+
+  // Only the load of all cores together is known.
+  for (auto& core : m_cores)
+    core.m_usagePercent = load;
+  return load;
 }
 
 float CCPUInfoWasm::GetCPUFrequency()
 {
-  return 0.0f;
+  // In MHz, the nominal frequency
+  const std::string frequency = KODI::PLATFORM::WASM::GetSystemCapability(
+      "http://tizen.org/feature/platform.core.cpu.frequency");
+  return frequency.empty() ? 0.0f : static_cast<float>(std::atof(frequency.c_str()));
 }

@@ -16,7 +16,7 @@ public:
   CCPUInfoWasm();
   ~CCPUInfoWasm() = default;
 
-  bool SupportsCPUUsage() const override { return false; }
+  bool SupportsCPUUsage() const override;
   int GetUsedPercentage() override;
   float GetCPUFrequency() override;
 };

@@ -22,16 +22,16 @@ public:
   bool IsEnabled() const override { return true; }
   bool IsConnected() const override;
 
-  std::string GetMacAddress() const override { return "00:00:00:00:00:00"; }
+  std::string GetMacAddress() const override;
   void GetMacAddressRaw(char rawMac[6]) const override;
 
   bool GetHostMacAddress(unsigned long host, std::string& mac) const override { return false; }
 
-  // The browser doesn't expose the real interface addresses; loopback at least
-  // gives CNetworkBase::HasInterfaceForIP() a subnet to match against.
-  std::string GetCurrentIPAddress() const override { return "127.0.0.1"; }
-  std::string GetCurrentNetmask() const override { return "255.0.0.0"; }
-  std::string GetCurrentDefaultGateway() const override { return "127.0.0.1"; }
+  // A browser does not expose the interface addresses, a Samsung TV does. Without them
+  // loopback at least gives CNetworkBase::HasInterfaceForIP() a subnet to match against.
+  std::string GetCurrentIPAddress() const override;
+  std::string GetCurrentNetmask() const override;
+  std::string GetCurrentDefaultGateway() const override;
 };
 
 class CNetworkWasm : public CNetworkBase
