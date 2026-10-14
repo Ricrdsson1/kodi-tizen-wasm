@@ -288,7 +288,13 @@ bool CSysInfoJob::DoWork()
   m_info.videoEncoder      = GetVideoEncoder();
   m_info.cpuFrequency =
       StringUtils::Format("{:4.0f} MHz", CServiceBroker::GetCPUInfo()->GetCPUFrequency());
+#if defined(TARGET_WASM)
+  // The browser takes the place of the kernel.
+  m_info.osVersionInfo = CSysInfo::GetOsPrettyNameWithVersion() + " (" +
+                         CSysInfo::GetKernelName() + " " + CSysInfo::GetKernelVersionFull() + ")";
+#else
   m_info.osVersionInfo     = CSysInfo::GetOsPrettyNameWithVersion() + " (kernel: " + CSysInfo::GetKernelName() + " " + CSysInfo::GetKernelVersionFull() + ")";
+#endif
   m_info.macAddress        = GetMACAddress();
   m_info.batteryLevel      = GetBatteryLevel();
   m_info.ipAddress = GetIPAddress();
@@ -601,6 +607,9 @@ std::string CSysInfo::GetKernelName(bool emptyIfUnknown /*= false*/)
     auto e = EasClientDeviceInformation();
     auto os = e.OperatingSystem();
     g_charsetConverter.wToUTF8(std::wstring(os.c_str()), kernelName);
+#elif defined(TARGET_WASM)
+    std::string version;
+    KODI::PLATFORM::WASM::GetBrowser(kernelName, version);
 #elif defined(TARGET_POSIX)
     struct utsname un;
     if (uname(&un) == 0)
@@ -650,6 +659,10 @@ std::string CSysInfo::GetKernelVersionFull(void)
   kernelVersionFull = StringUtils::Format("{}.{}.{}", v1, v2, v3);
   if (v4)
     kernelVersionFull += StringUtils::Format(".{}", v4);
+
+#elif defined(TARGET_WASM)
+  std::string name;
+  KODI::PLATFORM::WASM::GetBrowser(name, kernelVersionFull);
 
 #elif defined(TARGET_POSIX)
   struct utsname un;

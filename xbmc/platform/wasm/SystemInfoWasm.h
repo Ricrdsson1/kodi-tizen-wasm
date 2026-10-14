@@ -38,6 +38,20 @@ bool GetSystemMemory(uint64_t& total, uint64_t& available);
 int GetSystemCpuLoad();
 
 /*!
+ * \brief The browser Kodi runs in, which takes the place of the kernel.
+ * \param name e.g. "Chromium"
+ * \param version e.g. "120.0.6099.5"
+ * \return false if unknown
+ */
+bool GetBrowser(std::string& name, std::string& version);
+
+/*!
+ * \brief The storage the profile is kept in, as last reported by the browser.
+ * \return false if unknown
+ */
+bool GetStorage(uint64_t& quota, uint64_t& usage);
+
+/*!
  * \brief Whether an add-on package of the given size can be downloaded and unpacked.
  *
  * Kodi's files are held in the memory of the browser and copied into its storage, which

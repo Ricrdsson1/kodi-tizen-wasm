@@ -11,6 +11,7 @@
 #include "utils/log.h"
 
 #include <cstdlib>
+#include <utility>
 
 #include <emscripten.h>
 
@@ -106,23 +107,71 @@ int GetSystemCpuLoad()
   return load < 0 ? -1 : static_cast<int>(load * 100.0 + 0.5);
 }
 
+bool GetBrowser(std::string& name, std::string& version)
+{
+  char* userAgent = static_cast<char*>(MAIN_THREAD_EM_ASM_PTR({
+    return typeof navigator === 'undefined' ? 0 : stringToNewUTF8(navigator.userAgent);
+  }));
+  if (!userAgent)
+    return false;
+  const std::string agent(userAgent);
+  free(userAgent);
+
+  // Checked in this order, as a browser names the ones it is compatible with as well.
+  static constexpr std::pair<const char*, const char*> browsers[] = {
+      {"Firefox/", "Firefox"}, {"Edg/", "Edge"}, {"Chrome/", "Chromium"}, {"Version/", "Safari"}};
+  for (const auto& [token, browserName] : browsers)
+  {
+    const size_t pos = agent.find(token);
+    if (pos == std::string::npos)
+      continue;
+    const size_t start = pos + std::char_traits<char>::length(token);
+    name = browserName;
+    version = agent.substr(start, agent.find(' ', start) - start);
+    return true;
+  }
+
+  // A Samsung TV names its Chromium as "<version>/<Tizen version> TV".
+  const size_t tv = agent.find(" TV ");
+  if (agent.find("Tizen") != std::string::npos && tv != std::string::npos)
+  {
+    const size_t start = agent.rfind(' ', tv - 1) + 1;
+    name = "Chromium";
+    version = agent.substr(start, agent.find('/', start) - start);
+    return true;
+  }
+  return false;
+}
+
+bool GetStorage(uint64_t& quota, uint64_t& usage)
+{
+  // Kept up to date by kodi_pre.js each time the profile is stored.
+  const double quotaBytes = MAIN_THREAD_EM_ASM_DOUBLE({
+    var storage = globalThis.kodiStorage;
+    return storage ? storage.quota : -1;
+  });
+  const double usageBytes = MAIN_THREAD_EM_ASM_DOUBLE({
+    var storage = globalThis.kodiStorage;
+    return storage ? storage.usage : -1;
+  });
+  if (quotaBytes <= 0 || usageBytes < 0)
+    return false;
+
+  quota = static_cast<uint64_t>(quotaBytes);
+  usage = static_cast<uint64_t>(usageBytes);
+  return true;
+}
+
 bool HasRoomForAddonPackage(uint64_t packageSize)
 {
   // Unpacked, skins took up to 1.7 times the size of their package.
   const uint64_t unpacked = packageSize * 7 / 4;
 
-  // Kept up to date by kodi_pre.js each time the profile is stored.
-  const double quota = MAIN_THREAD_EM_ASM_DOUBLE({
-    var storage = globalThis.kodiStorage;
-    return storage ? storage.quota : -1;
-  });
-  const double usage = MAIN_THREAD_EM_ASM_DOUBLE({
-    var storage = globalThis.kodiStorage;
-    return storage ? storage.usage : -1;
-  });
-  if (quota > 0 && usage >= 0 && usage + unpacked > quota)
+  uint64_t quota;
+  uint64_t usage;
+  if (GetStorage(quota, usage) && usage + unpacked > quota)
   {
-    CLog::Log(LOGERROR, "{}: {} bytes would be stored, {:.0f} of {:.0f} are in use", __FUNCTION__,
+    CLog::Log(LOGERROR, "{}: {} bytes would be stored, {} of {} are in use", __FUNCTION__,
               unpacked, usage, quota);
     return false;
   }

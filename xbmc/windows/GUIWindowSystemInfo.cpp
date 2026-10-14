@@ -122,9 +122,12 @@ void CGUIWindowSystemInfo::FrameMove()
     SetControlLabel(i++, "{}: {}", 150, NETWORK_IP_ADDRESS);
     SetControlLabel(i++, "{} {}", 13287, SYSTEM_SCREEN_RESOLUTION);
     SetControlLabel(i++, "{} {}", 13283, SYSTEM_OS_VERSION_INFO);
+    // A browser does not tell for how long the system has been up, nor about a battery.
+#if !defined(TARGET_WASM)
     SetControlLabel(i++, "{}: {}", 12390, SYSTEM_UPTIME);
     SetControlLabel(i++, "{}: {}", 12394, SYSTEM_TOTALUPTIME);
     SetControlLabel(i++, "{}: {}", 12395, SYSTEM_BATTERY_LEVEL);
+#endif
   }
 
   else if (m_section == CONTROL_BT_STORAGE)
