@@ -85,7 +85,7 @@ foreach(_dir ${WASM_STATIC_ADDONS})
   add_library(${_id} STATIC ${_sources})
   # The add-on is not Kodi code: it is not held to Kodi's warning set, and must
   # find its own headers where Kodi has some of the same name.
-  set_target_properties(${_id} PROPERTIES COMPILE_OPTIONS "" INCLUDE_DIRECTORIES ""
+  set_target_properties(${_id} PROPERTIES COMPILE_OPTIONS "$<$<BOOL:${WASM_OPTIMIZE_SIZE}>:-Os>" INCLUDE_DIRECTORIES ""
                                           FOLDER "Static Addons")
   target_include_directories(${_id} PRIVATE "${_dir}/src" ${_includes}
                                             "${CMAKE_SOURCE_DIR}/tools/wasm/addon-compat"

@@ -36,6 +36,14 @@ set(APP_BINARY_SUFFIX ".js")
 option(ENABLE_WASM_PROFILING "Enable Emscripten --profiling (CPU profiling in browser DevTools)" OFF)
 option(ENABLE_WASM_DEV_PROXY "Route cross-origin requests through tools/wasm/serve.py's /proxy" OFF)
 
+option(WASM_OPTIMIZE_SIZE "Optimize Kodi's own code for size rather than speed" OFF)
+if(WASM_OPTIMIZE_SIZE)
+  # Follows the -O2 of the toolchain file on the command line and so replaces it. The
+  # compiled code is held in memory, which is scarce on a TV.
+  add_compile_options(-Os)
+  add_link_options(-Os)
+endif()
+
 # Threading + memory (COOP/COEP headers required in HTML for pthreads).
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   add_link_options(
@@ -118,6 +126,19 @@ set(WASM_PRELOAD_ROOT "${CMAKE_BINARY_DIR}")
 set(WASM_VFS_PREFIX "/kodi")
 foreach(_dir addons media system userdata)
   add_link_options("SHELL:--preload-file ${WASM_PRELOAD_ROOT}/${_dir}@${WASM_VFS_PREFIX}/${_dir}")
+endforeach()
+
+# All of the preloaded data is held in memory, so leave out what cannot be used: the
+# web interface has no web server to serve it (its addon.xml stays, as the add-on is a
+# required one) and the version check has no releases to compare against.
+foreach(_path addons/webinterface.default/themes
+              addons/webinterface.default/lib
+              addons/webinterface.default/screenshots
+              addons/webinterface.default/js
+              addons/webinterface.default/lang
+              addons/webinterface.default/images
+              addons/service.xbmc.versioncheck)
+  add_link_options("SHELL:--exclude-file ${WASM_PRELOAD_ROOT}/${_path}")
 endforeach()
 
 set(ENABLE_UPNP OFF CACHE BOOL "UPnP not available in browser" FORCE)
