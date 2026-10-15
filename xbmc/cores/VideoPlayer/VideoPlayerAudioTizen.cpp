@@ -92,7 +92,9 @@ bool CVideoPlayerAudioTizen::IsStalled() const
 
 bool CVideoPlayerAudioTizen::IsPassthrough() const
 {
-  return true;
+  // Audio the TV decodes is decoded by Kodi instead once its settings adjust it, so
+  // they stay available.
+  return false;
 }
 
 float CVideoPlayerAudioTizen::GetDynamicRangeAmplification() const

@@ -18,6 +18,7 @@
 #include "platform/wasm/tizen/TizenEMSS.h"
 
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -147,6 +148,17 @@ private:
   bool DecodeAudio(const DemuxPacket& packet);
 
   /*!
+   * \brief Whether the audio settings of the video change the sound, which only works
+   * on audio decoded here.
+   */
+  bool AdjustsAudio() const;
+
+  /*!
+   * \brief Apply the volume amplification and centre level of the video to m_pcm.
+   */
+  void AdjustAudio();
+
+  /*!
    * \brief Prepare the conversion of length-prefixed H.264/HEVC to Annex B.
    *
    * Annex B carries the parameter sets in the stream, which lets the resolution
@@ -196,6 +208,14 @@ private:
   int m_pcmSamples{0}; // per channel, in m_pcm
   //! The packet m_pcm was decoded from, which the TV did not take yet
   const DemuxPacket* m_pcmPacket{nullptr};
+  int m_pcmCenter{-1}; // index of the centre channel in m_pcm, -1 if none
+  //! Whether the TV can decode the audio, which is only decoded here to adjust it then
+  bool m_audioNative{false};
+  //! Whether audio the TV can decode can be decoded here as well
+  bool m_audioAdjustable{true};
+  //! Set when the audio is to be decoded elsewhere from the next flush on
+  std::atomic<bool> m_reloadAudio{false};
+  std::chrono::steady_clock::time_point m_reloadRequested;
   // Set once the demuxer has flagged a key frame; until then they are looked for here.
   bool m_demuxerFlagsKeyFrames{false};
   // Largest picture the TV was told to expect.

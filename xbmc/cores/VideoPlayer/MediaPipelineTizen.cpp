@@ -10,6 +10,7 @@
 
 #include "Buffers/VideoBufferTizen.h"
 #include "DVDClock.h"
+#include "DVDMessage.h"
 #include "DVDCodecs/Overlay/DVDOverlay.h"
 #include "DVDOverlayContainer.h"
 #include "Interface/DemuxCrypto.h"
@@ -435,6 +436,15 @@ void CMediaPipelineTizen::CloseVideoStream(const bool waitForBuffers)
 
 void CMediaPipelineTizen::Flush(const bool sync)
 {
+  if (m_reloadAudio.exchange(false) && m_loaded)
+  {
+    // Requested by FeedAudioData() to decode the audio elsewhere; the TV cannot
+    // reconfigure a track of a source that is open. The packets from before the
+    // seek are dropped below as with any flush.
+    Unload();
+    Load();
+  }
+
   std::scoped_lock lock(m_videoFeedMutex, m_audioFeedMutex);
 
   FlushAudioMessages();
@@ -590,8 +600,16 @@ bool CMediaPipelineTizen::Load()
       tizen_emss_validate_audio(audioMime, sampleFormat, channelLayout, sampleRate) == 0)
     audioMime = nullptr;
 
+  // Audio the TV can decode is decoded here as well while its settings adjust it.
+  m_audioNative = audioMime != nullptr && !DrmSession(m_audioHint);
+  {
+    const CVideoSettings settings = m_processInfo.GetVideoSettings();
+    CLog::LogF(LOGDEBUG, "Audio amplification {:.1f} dB, centre level {} dB",
+               settings.m_VolumeAmplification, settings.m_CenterMixLevel);
+  }
   CloseAudioDecoder();
-  if (m_hasAudio && m_audioHint.codec != AV_CODEC_ID_NONE && !audioMime && !DrmSession(m_audioHint))
+  if (m_hasAudio && m_audioHint.codec != AV_CODEC_ID_NONE && (!audioMime || AdjustsAudio()) &&
+      !DrmSession(m_audioHint))
   {
     if (OpenAudioDecoder())
     {
@@ -608,6 +626,7 @@ bool CMediaPipelineTizen::Load()
         CloseAudioDecoder();
     }
   }
+  m_audioAdjustable = !m_audioNative || m_audioDecoder || !AdjustsAudio();
   if (m_hasAudio && m_audioHint.codec != AV_CODEC_ID_NONE && !audioMime)
     CLog::LogF(LOGWARNING, "The TV cannot decode audio codec {}, playing without sound",
                avcodec_get_name(m_audioHint.codec));
@@ -991,6 +1010,25 @@ bool CMediaPipelineTizen::FeedAudioData(const std::shared_ptr<CDVDMsg>& msg)
   if (m_flushed || m_restarting || !m_state.audioOpen)
     return false;
 
+  // Audio the TV can decode is only decoded here while the settings adjust it. Switching
+  // sets the source up again, which a seek to the current position does.
+  // A seek that VideoPlayer skipped is asked for again.
+  const auto now = std::chrono::steady_clock::now();
+  if (m_reloadAudio && now - m_reloadRequested > 3s)
+    m_reloadAudio = false;
+  if (m_audioNative && m_audioAdjustable && (m_audioDecoder != nullptr) != AdjustsAudio() &&
+      !m_reloadAudio.exchange(true))
+  {
+    m_reloadRequested = now;
+    CLog::LogF(LOGINFO, "Audio is now decoded by {}", m_audioDecoder ? "the TV" : "Kodi");
+    CDVDMsgPlayerSeek::CMode mode;
+    mode.time = m_state.currentTime * 1000.0;
+    mode.accurate = true;
+    mode.sync = true;
+    mode.restore = false;
+    m_messageQueueParent.Put(std::make_shared<CDVDMsgPlayerSeek>(mode));
+  }
+
   const double pts = ToSeconds(packet->pts);
   if (m_audioDecoder)
   {
@@ -1065,6 +1103,14 @@ bool CMediaPipelineTizen::OpenAudioDecoder()
                            : m_audioHint.channels;
   m_pcmChannels = std::clamp(channels, 1, PCM_MAX_CHANNELS);
   m_pcmRate = m_audioDecoder->sample_rate > 0 ? m_audioDecoder->sample_rate : PCM_FALLBACK_RATE;
+  m_pcmCenter = -1;
+  if (m_pcmChannels >= 3)
+  {
+    AVChannelLayout layout;
+    av_channel_layout_default(&layout, m_pcmChannels);
+    m_pcmCenter = av_channel_layout_index_from_channel(&layout, AV_CHAN_FRONT_CENTER);
+    av_channel_layout_uninit(&layout);
+  }
   m_pcmPacket = nullptr;
   CLog::LogF(LOGINFO, "Decoding {} for the TV, {} channels at {} Hz", codec->name, m_pcmChannels,
              m_pcmRate);
@@ -1137,7 +1183,35 @@ bool CMediaPipelineTizen::DecodeAudio(const DemuxPacket& packet)
     m_pcm.resize(offset + static_cast<size_t>(converted) * frameBytes);
     m_pcmSamples += converted;
   }
+  AdjustAudio();
   return true;
+}
+
+bool CMediaPipelineTizen::AdjustsAudio() const
+{
+  const CVideoSettings settings = m_processInfo.GetVideoSettings();
+  return settings.m_VolumeAmplification != 0.0f || settings.m_CenterMixLevel != 0;
+}
+
+void CMediaPipelineTizen::AdjustAudio()
+{
+  const CVideoSettings settings = m_processInfo.GetVideoSettings();
+  const float gain = std::pow(10.0f, settings.m_VolumeAmplification / 20.0f);
+  // Without a downmix here the centre level is applied to the centre channel itself,
+  // which comes to the same when the TV downmixes.
+  const float centerGain =
+      m_pcmCenter >= 0 ? gain * std::pow(10.0f, settings.m_CenterMixLevel / 20.0f) : gain;
+  if (gain == 1.0f && centerGain == 1.0f)
+    return;
+
+  auto* samples = reinterpret_cast<int16_t*>(m_pcm.data());
+  const size_t count = m_pcm.size() / sizeof(int16_t);
+  for (size_t i = 0; i < count; ++i)
+  {
+    const bool center = m_pcmCenter >= 0 && static_cast<int>(i % m_pcmChannels) == m_pcmCenter;
+    const float value = samples[i] * (center ? centerGain : gain);
+    samples[i] = static_cast<int16_t>(std::clamp(value, -32768.0f, 32767.0f));
+  }
 }
 
 void CMediaPipelineTizen::UpdatePosition()
