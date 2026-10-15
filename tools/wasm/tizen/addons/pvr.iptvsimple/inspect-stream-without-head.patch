@@ -1,0 +1,51 @@
+diff --git a/src/iptvsimple/utilities/StreamUtils.cpp b/src/iptvsimple/utilities/StreamUtils.cpp
+index 09b7cc8..c233135 100644
+--- a/src/iptvsimple/utilities/StreamUtils.cpp
++++ b/src/iptvsimple/utilities/StreamUtils.cpp
+@@ -365,7 +365,10 @@ const StreamType StreamUtils::GetStreamType(const std::string& url, const std::s
+ 
+ const StreamType StreamUtils::InspectStreamType(const std::string& url, CatchupMode catchupMode)
+ {
+-  if (!FileUtils::FileExists(url))
++  // Live streams may not answer the HEAD request FileExists() makes for an HTTP URL,
++  // which then blocks for the whole timeout. Reading the start of the stream below
++  // tells as much.
++  if (!WebUtils::IsHttpUrl(url) && !FileUtils::FileExists(url))
+     return StreamType::OTHER_TYPE;
+ 
+   int httpCode = 0;
+@@ -381,6 +384,12 @@ const StreamType StreamUtils::InspectStreamType(const std::string& url, CatchupM
+ 
+     if (source.find("<SmoothStreamingMedia") != std::string::npos)
+       return StreamType::SMOOTH_STREAMING;
++
++    // MPEG-TS packets are 188 bytes long and start with a sync byte. Without a type,
++    // Kodi would look the stream up with a HEAD request, which live streams may not
++    // answer.
++    if (source.size() > 188 && source[0] == 0x47 && source[188] == 0x47)
++      return StreamType::TS;
+   }
+ 
+   // If we can't inspect the stream type the only option left for default, append or shift mode is TS
+diff --git a/src/iptvsimple/utilities/WebUtils.cpp b/src/iptvsimple/utilities/WebUtils.cpp
+index 914f0fb..1e80c32 100644
+--- a/src/iptvsimple/utilities/WebUtils.cpp
++++ b/src/iptvsimple/utilities/WebUtils.cpp
+@@ -98,9 +98,16 @@ std::string WebUtils::ReadFileContentsStartOnly(const std::string& url, int* htt
+ 
+   if (file.OpenFile(url, ADDON_READ_NO_CACHE))
+   {
++    // A read returns what has arrived so far, which for a stream can be less than asked.
+     char buffer[1024];
+-    if (int bytesRead = file.Read(buffer, 1024))
++    while (strContent.size() < sizeof(buffer))
++    {
++      const ssize_t bytesRead =
++          file.Read(buffer, sizeof(buffer) - strContent.size());
++      if (bytesRead <= 0)
++        break;
+       strContent.append(buffer, bytesRead);
++    }
+   }
+ 
+   if (strContent.empty())

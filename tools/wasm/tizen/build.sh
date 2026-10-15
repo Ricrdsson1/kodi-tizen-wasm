@@ -109,6 +109,10 @@ while read -r id url revision; do
   if [ ! -d "$WORK/addons-src/pvr/$id" ]; then
     git clone "$url" "$WORK/addons-src/pvr/$id"
     git -C "$WORK/addons-src/pvr/$id" checkout -q "$revision"
+    # Changes the add-on needs here, from tools/wasm/tizen/addons/<id>.
+    for patch in "$KODI/tools/wasm/tizen/addons/$id"/*.patch; do
+      [ -f "$patch" ] && git -C "$WORK/addons-src/pvr/$id" apply "$patch"
+    done
   fi
   PVR_DIRS+=("$WORK/addons-src/pvr/$id")
 done < "$KODI/tools/wasm/tizen/pvr-addons.txt"

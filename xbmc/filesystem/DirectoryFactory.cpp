@@ -137,7 +137,12 @@ IDirectory* CDirectoryFactory::Create(const CURL& url)
   struct __stat64 st = {};
   static constexpr auto excludedProtocols =
       make_set<std::string_view>({"upnp", "addons", "favourites", "sources"});
-  const bool exclude{excludedProtocols.contains(url.GetProtocol())};
+  // Over HTTP, a path without a trailing slash is a file. Asking the server would cost
+  // a HEAD request, which live streams may never answer, and playback would wait for
+  // its timeouts.
+  const bool httpFile{(url.IsProtocol("http") || url.IsProtocol("https")) &&
+                      !URIUtils::HasSlashAtEnd(url.Get(), true)};
+  const bool exclude{excludedProtocols.contains(url.GetProtocol()) || httpFile};
   if (!exclude && CFile::Stat(URIUtils::SubstitutePath(url), &st) == 0)
   {
     item.SetFolder(S_ISDIR(st.st_mode));

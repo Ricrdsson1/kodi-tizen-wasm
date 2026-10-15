@@ -60,8 +60,13 @@ mergeInto(LibraryManager.library, {
     // Adds the TizenEmssFrameInfo at frame, if any, to a packet.
     frameInfo: function(packet, frame) {
       if (!frame) return packet;
-      packet.width = HEAP32[frame >> 2];
-      packet.height = HEAP32[(frame + 4) >> 2];
+      // Width and height go together, and only when they are known.
+      var width = HEAP32[frame >> 2];
+      var height = HEAP32[(frame + 4) >> 2];
+      if (width > 0 && height > 0) {
+        packet.width = width;
+        packet.height = height;
+      }
       packet.framerateNum = HEAP32[(frame + 8) >> 2];
       packet.framerateDen = HEAP32[(frame + 12) >> 2];
       return packet;

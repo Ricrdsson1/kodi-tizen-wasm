@@ -95,6 +95,10 @@ and `static_addons.py` derives their build options. All of them compile, link an
 found by Kodi; only the IPTV Simple Client is enabled from the start, the others are
 enabled under Add-ons > My add-ons > PVR clients.
 
+Changes an add-on needs here are kept as patches in `addons/<id>`, which `build.sh`
+applies. The IPTV Simple Client tells a live MPEG-TS stream by its first bytes instead
+of asking the server with a HEAD request, which some IPTV servers never answer.
+
 Only the IPTV Simple Client has been used against a real backend. The others are
 untested: an add-on that talks to its backend over a protocol of its own depends on the
 sockets of the TV, and those for services with DRM (such as Zattoo, Waipu, Teleboy)

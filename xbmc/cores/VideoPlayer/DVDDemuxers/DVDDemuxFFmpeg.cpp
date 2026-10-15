@@ -654,6 +654,11 @@ bool CDVDDemuxFFmpeg::Open(const std::shared_ptr<CDVDInputStream>& pInput, bool 
 
   // Live/realtime excluded: the full probe would stall playback start by seconds.
   bool forceFullAnalysis = skipTsOptimization && !pInput->IsRealtime();
+#if defined(TARGET_WASM)
+  // The TV's player has to be set up with the video size and audio format, which a
+  // transport stream without the analysis only reveals bit by bit while it plays.
+  forceFullAnalysis = forceFullAnalysis || isMpegTs;
+#endif
 
   if (isMpegTsWithStreams && !url.IsProtocol("tcp") && !fileinfo && !isBluray && !forceFullAnalysis)
   {

@@ -557,10 +557,15 @@ bool CMediaPipelineTizen::Load()
 {
   std::scoped_lock lock(m_videoFeedMutex, m_audioFeedMutex);
 
-  if (!m_videoHint.width || !m_videoHint.height)
+  // A live stream may be opened before its size is known. The TV reads it from the
+  // stream, so it only has to be prepared for a large enough picture.
+  const bool sizeKnown = m_videoHint.width > 0 && m_videoHint.height > 0;
+  if (!sizeKnown)
   {
-    CLog::LogF(LOGERROR, "null size, cannot handle");
-    return false;
+    CLog::LogF(LOGINFO, "Video size not known yet, preparing the TV for {}x{}",
+               MIN_CONFIG_WIDTH, MIN_CONFIG_HEIGHT);
+    m_videoHint.width = MIN_CONFIG_WIDTH;
+    m_videoHint.height = MIN_CONFIG_HEIGHT;
   }
 
   int fpsRate = m_videoHint.fpsrate;
@@ -572,7 +577,9 @@ bool CMediaPipelineTizen::Load()
   }
   const double fps = static_cast<double>(fpsRate) / fpsScale;
   m_frameDuration = 1.0 / fps;
-  m_frameInfo = {m_videoHint.width, m_videoHint.height, fpsRate, fpsScale};
+  // Packets only tell the TV a size that is known.
+  m_frameInfo = {sizeKnown ? m_videoHint.width : 0, sizeKnown ? m_videoHint.height : 0,
+                 fpsRate, fpsScale};
 
   const std::string videoMime = VideoMime(m_videoHint);
   m_configWidth = std::max(m_videoHint.width, MIN_CONFIG_WIDTH);
@@ -594,6 +601,18 @@ bool CMediaPipelineTizen::Load()
   const char* audioMime = m_hasAudio ? AudioMime(m_audioHint.codec) : nullptr;
   const char* sampleFormat =
       m_audioHint.codec == AV_CODEC_ID_MP3 ? "SampleFormatPlanarS16" : "SampleFormatPlanarF32";
+  // Like the video size, the audio format of a live stream may not be known yet. The
+  // TV's decoders read it from the stream; audio decoded here is converted to it.
+  if (m_hasAudio && m_audioHint.codec != AV_CODEC_ID_NONE &&
+      (m_audioHint.channels <= 0 || m_audioHint.samplerate <= 0))
+  {
+    CLog::LogF(LOGINFO, "Audio format not known yet, assuming stereo at {} Hz",
+               PCM_FALLBACK_RATE);
+    if (m_audioHint.channels <= 0)
+      m_audioHint.channels = 2;
+    if (m_audioHint.samplerate <= 0)
+      m_audioHint.samplerate = PCM_FALLBACK_RATE;
+  }
   const char* channelLayout = ChannelLayout(m_audioHint.channels);
   int sampleRate = m_audioHint.samplerate;
   if (audioMime &&
