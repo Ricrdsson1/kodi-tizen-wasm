@@ -1508,6 +1508,12 @@ void CApplication::WasmRunIteration()
   Cleanup();
   CLog::Log(LOGINFO, "Exiting the application...");
   CAppEnvironment::TearDown();
+
+  // Otherwise the page stays, black, after Kodi has gone.
+  MAIN_THREAD_ASYNC_EM_ASM({
+    if (globalThis.kodiQuit)
+      globalThis.kodiQuit();
+  });
 }
 #endif
 

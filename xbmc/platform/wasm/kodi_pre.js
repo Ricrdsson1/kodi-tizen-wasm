@@ -13,6 +13,16 @@
   var Module = globalThis.Module = globalThis.Module || {};
   var PROFILE_PATH = '/home/web_user/.kodi';
 
+  // Called once Kodi has shut down: a page cannot end itself, a Tizen app can.
+  function closeApp() {
+    try {
+      tizen.application.getCurrentApplication().exit();
+    } catch (e) {
+      try { window.close(); } catch (e2) {}
+    }
+  }
+  globalThis.kodiQuit = closeApp;
+
   Module.preRun = Module.preRun || [];
   Module.preRun.push(function mountKodiProfile() {
     try {
@@ -122,6 +132,7 @@
     // Debounced background flush to IndexedDB.
     var syncing = false;
     var pending = false;
+    var closeAfterFlush = false;
     function flushToIdb() {
       if (syncing) { pending = true; return; }
       syncing = true;
@@ -130,8 +141,16 @@
         if (err) { console.warn('[kodi] IDBFS persist:', err.name || err, err.message || ''); }
         updateStorageEstimate();
         if (pending) { pending = false; flushToIdb(); }
+        else if (closeAfterFlush) closeApp();
       });
     }
+
+    // What Kodi saved while shutting down is stored before the app closes. A flush that
+    // is running already may have missed it, so one more follows it.
+    globalThis.kodiQuit = function () {
+      closeAfterFlush = true;
+      flushToIdb();
+    };
 
     // Block main() until the profile has been loaded from IndexedDB. A flush
     // before then would delete whatever has not been loaded yet.
