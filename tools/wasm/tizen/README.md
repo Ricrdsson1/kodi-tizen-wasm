@@ -3,6 +3,11 @@
 An experimental build of the WASM port packaged as a Tizen web application (`.wgt`).
 It has been run on one TV only: a 2025 model on Tizen 9.0 (Chromium 120).
 
+It needs Tizen 6.5 or newer, which Samsung ships on its TVs from 2022 on. Emscripten
+targets Chromium 85, the browser of Tizen 6.5, and Kodi runs multithreaded WebAssembly
+and plays audio through an AudioWorklet. Video is decoded through the Tizen WASM
+Player, which TVs before 2021 (Tizen 6.0) do not have at all.
+
 ## What works
 
 * GUI, remote control, audio through the browser audio worklet.
