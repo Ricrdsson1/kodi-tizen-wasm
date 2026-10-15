@@ -52,6 +52,7 @@
 #include "storage/MediaManager.h"
 #include "utils/ArtTypes.h"
 #include "utils/ContentNames.h"
+#include "utils/DefaultArt.h"
 #include "utils/FileExtensionProvider.h"
 #include "utils/FileUtils.h"
 #include "utils/GroupUtils.h"
@@ -250,8 +251,7 @@ bool CGUIWindowVideoBase::OnItemInfo(const CFileItem& fileItem)
 
   // Movie set
   if (fileItem.IsFolder() && VIDEO::IsVideoDb(fileItem) &&
-      fileItem.GetPath() != VIDEO::DB_PATH::MOVIE_SETS &&
-      StringUtils::StartsWith(fileItem.GetPath(), VIDEO::DB_PATH::MOVIE_SETS))
+      fileItem.GetVideoContentType() == VideoDbContentType::MOVIE_SETS)
     return ShowInfoAndRefresh(std::make_shared<CFileItem>(fileItem), nullptr);
 
   // Music video. Match visibility test of CMusicInfo::IsVisible
@@ -1190,7 +1190,7 @@ bool CGUIWindowVideoBase::Update(const std::string &strDirectory, bool updateFil
   if (!CGUIMediaWindow::Update(strDirectory, updateFilterPath))
     return false;
 
-  // might already be running from GetGroupedItems
+  // might already be running from OnFilterItems
   if (!m_thumbLoader.IsLoading())
     m_thumbLoader.Load(*m_vecItems);
 
@@ -1210,7 +1210,7 @@ bool CGUIWindowVideoBase::GetDirectory(const std::string &strDirectory, CFileIte
     CFileItemPtr newPlaylist(new CFileItem(profileManager->GetUserDataItem("PartyMode-Video.xsp"),false));
     newPlaylist->SetLabel(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(16035));
     newPlaylist->SetLabelPreformatted(true);
-    newPlaylist->SetArt(ART::TYPE::ICON, "DefaultPartyMode.png");
+    newPlaylist->SetArt(ART::TYPE::ICON, ART::DEFAULT::PARTY_MODE);
     newPlaylist->SetFolder(true);
     items.Add(newPlaylist);
 
@@ -1223,7 +1223,7 @@ bool CGUIWindowVideoBase::GetDirectory(const std::string &strDirectory, CFileIte
         std::string{ITEM::PLACEHOLDER::NEW_SMART_PLAYLIST} + "video", false);
     newPlaylist->SetLabel(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(
         21437)); // "new smart playlist..."
-    newPlaylist->SetArt(ART::TYPE::ICON, "DefaultAddSource.png");
+    newPlaylist->SetArt(ART::TYPE::ICON, ART::DEFAULT::ADD_SOURCE);
     newPlaylist->SetLabelPreformatted(true);
     items.Add(newPlaylist);
   }
@@ -1287,12 +1287,18 @@ void CGUIWindowVideoBase::GetGroupedItems(CFileItemList &items)
       }
     }
   }
+}
 
-  // reload thumbs after filtering and grouping
+void CGUIWindowVideoBase::OnFilterItems(const std::string& filter)
+{
+  // stop before the items are changed, the loader thread reads them
   if (m_thumbLoader.IsLoading())
     m_thumbLoader.StopThread();
 
-  m_thumbLoader.Load(items);
+  CGUIMediaWindow::OnFilterItems(filter);
+
+  // reload thumbs after filtering and grouping
+  m_thumbLoader.Load(*m_vecItems);
 }
 
 bool CGUIWindowVideoBase::CheckFilterAdvanced(CFileItemList &items) const

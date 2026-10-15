@@ -61,6 +61,7 @@
 #include "storage/MediaManager.h"
 #include "utils/ArtTypes.h"
 #include "utils/ContentNames.h"
+#include "utils/DefaultArt.h"
 #include "utils/FileUtils.h"
 #include "utils/ItemProperties.h"
 #include "utils/LegacyPathTranslation.h"
@@ -5750,7 +5751,7 @@ bool CMusicDatabase::GetArtistsByWhere(const std::string& strBaseDir,
         pItem->GetMusicInfoTag()->SetDatabaseId(artist.idArtist, MEDIA::TYPE::ARTIST);
         // Set icon now to avoid slow per item processing in FillInDefaultIcon later
         pItem->SetProperty(ITEM::PROPERTY::ICON_NEVER_OVERLAY, true);
-        pItem->SetArt(ART::TYPE::ICON, "DefaultArtist.png");
+        pItem->SetArt(ART::TYPE::ICON, ART::DEFAULT::ARTIST);
 
         SetPropertiesFromArtist(*pItem, artist);
         items.Add(std::move(pItem));
@@ -5979,7 +5980,7 @@ bool CMusicDatabase::GetAlbumsByWhere(const std::string& baseDir,
         auto pItem{std::make_shared<CFileItem>(itemUrl.ToString(), GetAlbumFromDataset(record))};
         // Set icon now to avoid slow per item processing in FillInDefaultIcon later
         pItem->SetProperty(ITEM::PROPERTY::ICON_NEVER_OVERLAY, true);
-        pItem->SetArt(ART::TYPE::ICON, "DefaultAlbumCover.png");
+        pItem->SetArt(ART::TYPE::ICON, ART::DEFAULT::ALBUM_COVER);
         items.Add(std::move(pItem));
       }
       catch (...)
@@ -6191,7 +6192,7 @@ bool CMusicDatabase::GetDiscsByWhere(CMusicDbUrl& musicUrl,
         pItem->SetLabel(strDiscSubtitle);
         // Set icon now to avoid slow per item processing in FillInDefaultIcon later
         pItem->SetProperty(ITEM::PROPERTY::ICON_NEVER_OVERLAY, true);
-        pItem->SetArt(ART::TYPE::ICON, "DefaultAlbumCover.png");
+        pItem->SetArt(ART::TYPE::ICON, ART::DEFAULT::ALBUM_COVER);
         items.Add(std::move(pItem));
       }
       catch (...)
@@ -6425,7 +6426,7 @@ bool CMusicDatabase::GetSongsFullByWhere(const std::string& baseDir,
           item->SetProgramCount(count);
           // Set icon now to avoid slow per item processing in FillInDefaultIcon later
           item->SetProperty(ITEM::PROPERTY::ICON_NEVER_OVERLAY, true);
-          item->SetArt(ART::TYPE::ICON, "DefaultAudio.png");
+          item->SetArt(ART::TYPE::ICON, ART::DEFAULT::AUDIO);
           items.Add(std::move(item));
         }
         // Get song artist credits and contributors
@@ -11815,13 +11816,13 @@ bool CMusicDatabase::GetItems(const std::string& strBaseDir,
                               const SortDescription& sortDescription,
                               const Filter& filter /* = Filter() */)
 {
-  if (StringUtils::EqualsNoCase(itemType, "genres"))
+  if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::GENRES))
     return GetGenresNav(strBaseDir, items, filter);
-  else if (StringUtils::EqualsNoCase(itemType, "sources"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::SOURCES))
     return GetSourcesNav(strBaseDir, items, filter);
-  else if (StringUtils::EqualsNoCase(itemType, "years"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::YEARS))
     return GetYearsNav(strBaseDir, items, filter);
-  else if (StringUtils::EqualsNoCase(itemType, "roles"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::ROLES))
     return GetRolesNav(strBaseDir, items, filter);
   else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::ARTISTS))
     return GetArtistsNav(strBaseDir, items, sortDescription,
@@ -11830,7 +11831,7 @@ bool CMusicDatabase::GetItems(const std::string& strBaseDir,
                          -1, -1, -1, filter, false);
   else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::ALBUMS))
     return GetAlbumsByWhere(strBaseDir, items, sortDescription, filter);
-  else if (StringUtils::EqualsNoCase(itemType, "discs"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::DISCS))
     return GetDiscsByWhere(strBaseDir, items, sortDescription, filter);
   else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::SONGS))
     return GetSongsFullByWhere(strBaseDir, items, sortDescription, filter, true);
@@ -11840,17 +11841,17 @@ bool CMusicDatabase::GetItems(const std::string& strBaseDir,
 
 std::string CMusicDatabase::GetItemById(const std::string& itemType, int id) const
 {
-  if (StringUtils::EqualsNoCase(itemType, "genres"))
+  if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::GENRES))
     return GetGenreById(id);
-  else if (StringUtils::EqualsNoCase(itemType, "sources"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::SOURCES))
     return GetSourceById(id);
-  else if (StringUtils::EqualsNoCase(itemType, "years"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::YEARS))
     return std::to_string(id);
   else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::ARTISTS))
     return GetArtistById(id);
   else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::ALBUMS))
     return GetAlbumById(id);
-  else if (StringUtils::EqualsNoCase(itemType, "roles"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::ROLES))
     return GetRoleById(id);
 
   return "";
@@ -13558,7 +13559,7 @@ bool CMusicDatabase::GetFilter(CDbUrl& musicUrl, Filter& filter, SortDescription
                                       AudioType::ToString(AudioType::Type::Album).c_str()));
     }
   }
-  else if (type == "discs")
+  else if (type == MEDIA::CONTENT::DISCS)
   {
     if (idAlbum > 0)
       filter.AppendWhere(PrepareSQL("albumview.idAlbum = %i", idAlbum));

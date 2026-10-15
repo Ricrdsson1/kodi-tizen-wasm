@@ -53,6 +53,7 @@
 #include "utils/ArtTypes.h"
 #include "utils/ArtUtils.h"
 #include "utils/ContentNames.h"
+#include "utils/DefaultArt.h"
 #include "utils/FileUtils.h"
 #include "utils/GroupUtils.h"
 #include "utils/ItemProperties.h"
@@ -71,6 +72,7 @@
 #include "video/VideoLibraryQueue.h"
 #include "video/VideoManagerTypes.h"
 #include "video/VideoThumbLoader.h"
+#include "video/VideoUtils.h"
 
 #include <algorithm>
 #include <chrono>
@@ -4915,8 +4917,8 @@ bool CVideoDatabase::GetStreamDetails(CVideoInfoTag& tag)
 
   bool retVal = false;
 
-  CStreamDetails& details = tag.m_streamDetails;
-  details.Reset();
+  // Filled locally and published once, so the GUI never sees the details empty or half filled
+  CStreamDetails details;
 
   std::unique_ptr<Dataset> pDS(m_pDB->CreateDataset());
   try
@@ -4936,10 +4938,11 @@ bool CVideoDatabase::GetStreamDetails(CVideoInfoTag& tag)
   {
     CLog::LogF(LOGERROR, "({}) failed", tag.m_iFileId);
   }
-  details.DetermineBestStreams();
+  // Assigning determines the best streams, which GetVideoDuration() reads
+  tag.m_streamDetails = details;
 
-  if (details.GetVideoDuration() > 0)
-    tag.SetDuration(details.GetVideoDuration());
+  if (const int duration{tag.m_streamDetails.GetVideoDuration()}; duration > 0)
+    tag.SetDuration(duration);
 
   return retVal;
 }
@@ -5253,14 +5256,8 @@ CVideoInfoTag CVideoDatabase::GetDetailsForTvShow(const dbiplus::sql_record* con
   {
     item->SetDateTime(details.GetPremiered());
     item->SetProperty(ITEM::PROPERTY::TOTAL_SEASONS, details.m_iSeason);
-    item->SetProperty("totalepisodes", details.m_iEpisode);
-    item->SetProperty("numepisodes", details.m_iEpisode); // will be changed later to reflect watchmode setting
-    item->SetProperty("watchedepisodes", details.GetPlayCount());
-    item->SetProperty("unwatchedepisodes", details.m_iEpisode - details.GetPlayCount());
+    VIDEO::UTILS::SetEpisodeCounts(*item, details.m_iEpisode, details.GetPlayCount());
     item->SetProperty(ITEM::PROPERTY::IN_PROGRESS_EPISODES, inProgressEpisodes);
-    item->SetProperty("watchedepisodepercent",
-                      details.m_iEpisode > 0 ? (details.GetPlayCount() * 100 / details.m_iEpisode)
-                                             : 0);
   }
   details.SetPlayCount((details.m_iEpisode <= details.GetPlayCount()) ? 1 : 0);
 
@@ -7327,9 +7324,9 @@ bool CVideoDatabase::GetActorsNav(const std::string& strBaseDir,
     {
       CFileItemPtr pItem = items[i];
       if (idContent == VideoDbContentType::MUSICVIDEOS)
-        pItem->SetArt(ART::TYPE::ICON, "DefaultArtist.png");
+        pItem->SetArt(ART::TYPE::ICON, ART::DEFAULT::ARTIST);
       else
-        pItem->SetArt(ART::TYPE::ICON, "DefaultActor.png");
+        pItem->SetArt(ART::TYPE::ICON, ART::DEFAULT::ACTOR);
     }
     return true;
   }
@@ -7949,13 +7946,8 @@ bool CVideoDatabase::GetSeasonsByWhere(const std::string& strBaseDir, const Filt
         const int inProgressEpisodes = m_pDS->fv(VIDEODB_ID_SEASON_EPISODES_INPROGRESS).get_asInt();
 
         pItem->GetVideoInfoTag()->m_iEpisode = totalEpisodes;
-        pItem->SetProperty("totalepisodes", totalEpisodes);
-        pItem->SetProperty("numepisodes", totalEpisodes); // will be changed later to reflect watchmode setting
-        pItem->SetProperty("watchedepisodes", watchedEpisodes);
-        pItem->SetProperty("unwatchedepisodes", totalEpisodes - watchedEpisodes);
+        VIDEO::UTILS::SetEpisodeCounts(*pItem, totalEpisodes, watchedEpisodes);
         pItem->SetProperty(ITEM::PROPERTY::IN_PROGRESS_EPISODES, inProgressEpisodes);
-        pItem->SetProperty("watchedepisodepercent",
-                           totalEpisodes > 0 ? (watchedEpisodes * 100 / totalEpisodes) : 0);
         if (iSeason == 0)
           pItem->SetProperty("isspecial", true);
         pItem->GetVideoInfoTag()->SetPlayCount((totalEpisodes == watchedEpisodes) ? 1 : 0);
@@ -8082,28 +8074,28 @@ bool CVideoDatabase::GetItems(const std::string& strBaseDir,
   else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::EPISODES) &&
            mediaType == VideoDbContentType::EPISODES)
     return GetEpisodesByWhere(strBaseDir, filter, items, true, sortDescription);
-  else if (StringUtils::EqualsNoCase(itemType, "seasons") &&
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::SEASONS) &&
            mediaType == VideoDbContentType::TVSHOWS)
     return GetSeasonsNav(strBaseDir, items);
-  else if (StringUtils::EqualsNoCase(itemType, "genres"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::GENRES))
     return GetGenresNav(strBaseDir, items, mediaType, filter);
-  else if (StringUtils::EqualsNoCase(itemType, "years"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::YEARS))
     return GetYearsNav(strBaseDir, items, mediaType, filter);
-  else if (StringUtils::EqualsNoCase(itemType, "actors"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::ACTORS))
     return GetActorsNav(strBaseDir, items, mediaType, filter);
-  else if (StringUtils::EqualsNoCase(itemType, "directors"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::DIRECTORS))
     return GetDirectorsNav(strBaseDir, items, mediaType, filter);
-  else if (StringUtils::EqualsNoCase(itemType, "writers"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::WRITERS))
     return GetWritersNav(strBaseDir, items, mediaType, filter);
-  else if (StringUtils::EqualsNoCase(itemType, "studios"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::STUDIOS))
     return GetStudiosNav(strBaseDir, items, mediaType, filter);
-  else if (StringUtils::EqualsNoCase(itemType, "sets"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::SETS))
     return GetSetsNav(strBaseDir, items, mediaType, filter, !CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_VIDEOLIBRARY_GROUPSINGLEITEMSETS));
-  else if (StringUtils::EqualsNoCase(itemType, "countries"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::COUNTRIES))
     return GetCountriesNav(strBaseDir, items, mediaType, filter);
-  else if (StringUtils::EqualsNoCase(itemType, "tags"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::TAGS))
     return GetTagsNav(strBaseDir, items, mediaType, filter);
-  else if (StringUtils::EqualsNoCase(itemType, "videoversions"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::VIDEOVERSIONS))
     return GetVideoVersionsNav(strBaseDir, items, mediaType, filter);
   else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::ARTISTS) &&
            mediaType == VideoDbContentType::MUSICVIDEOS)
@@ -8117,23 +8109,23 @@ bool CVideoDatabase::GetItems(const std::string& strBaseDir,
 
 std::string CVideoDatabase::GetItemById(const std::string &itemType, int id)
 {
-  if (StringUtils::EqualsNoCase(itemType, "genres"))
+  if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::GENRES))
     return GetGenreById(id);
-  else if (StringUtils::EqualsNoCase(itemType, "years"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::YEARS))
     return std::to_string(id);
-  else if (StringUtils::EqualsNoCase(itemType, "actors") ||
-           StringUtils::EqualsNoCase(itemType, "directors") ||
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::ACTORS) ||
+           StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::DIRECTORS) ||
            StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::ARTISTS))
     return GetPersonById(id);
-  else if (StringUtils::EqualsNoCase(itemType, "studios"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::STUDIOS))
     return GetStudioById(id);
-  else if (StringUtils::EqualsNoCase(itemType, "sets"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::SETS))
     return GetSetById(id);
-  else if (StringUtils::EqualsNoCase(itemType, "countries"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::COUNTRIES))
     return GetCountryById(id);
-  else if (StringUtils::EqualsNoCase(itemType, "tags"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::TAGS))
     return GetTagById(id);
-  else if (StringUtils::EqualsNoCase(itemType, "videoversions"))
+  else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::VIDEOVERSIONS))
     return GetVideoVersionById(id);
   else if (StringUtils::EqualsNoCase(itemType, MEDIA::CONTENT::ALBUMS))
     return GetMusicVideoAlbumById(id);
@@ -12754,7 +12746,7 @@ bool CVideoDatabase::GetFilter(CDbUrl &videoUrl, Filter &filter, SortDescription
       AppendIdLinkFilter("tag", "tag", MEDIA::TYPE::TV_SHOW, "tvshow", "idShow", options, filter);
       AppendLinkFilter("tag", "tag", MEDIA::TYPE::TV_SHOW, "tvshow", "idShow", options, filter);
     }
-    else if (itemType == "seasons")
+    else if (itemType == MEDIA::CONTENT::SEASONS)
     {
       auto option = options.find("tvshowid");
       if (option != options.end())
