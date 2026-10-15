@@ -15,6 +15,7 @@
 
 #include <memory>
 #include <stdint.h>
+#include <string>
 #include <vector>
 
 class CEventLog;
@@ -214,6 +215,10 @@ private:
   int m_nextProfileId{
       MASTER_PROFILE_ID}; // for tracking the next available id to give to a new profile to ensure id's are not re-used
   mutable CCriticalSection m_critical;
+#if defined(TARGET_WASM)
+  //! What Save() wrote last
+  mutable std::string m_savedXml;
+#endif
 
   // Event properties
   std::unique_ptr<CEventLogManager> m_eventLogs;

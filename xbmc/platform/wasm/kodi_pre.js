@@ -84,6 +84,41 @@
       return;
     }
 
+    // Storing the profile first goes through all of its files, which blocks the main
+    // thread for 180 ms with 2000 files on a TV, long enough to make the video stutter.
+    // So the profile is only stored after a change to a file that is kept.
+    var dirty = false;
+    function markDirty(path) {
+      if (typeof path === 'string' && path.startsWith(PROFILE_PATH + '/') && !isTransient(path)) {
+        dirty = true;
+      }
+    }
+    function trackChanges(name, pathOf) {
+      var original = FS[name];
+      FS[name] = function () {
+        try {
+          markDirty(pathOf.apply(null, arguments));
+        } catch (e) {
+        }
+        return original.apply(FS, arguments);
+      };
+    }
+    function firstArg(path) { return path; }
+    function streamPath(stream) { return stream && stream.path; }
+    ['mknod', 'unlink', 'rmdir', 'truncate', 'chmod', 'utime'].forEach(function (name) {
+      trackChanges(name, firstArg);
+    });
+    ['write', 'ftruncate', 'fchmod'].forEach(function (name) {
+      trackChanges(name, function (stream) {
+        return typeof stream === 'number' ? streamPath(FS.getStream(stream)) : streamPath(stream);
+      });
+    });
+    trackChanges('symlink', function (target, path) { return path; });
+    trackChanges('rename', function (oldPath, newPath) {
+      markDirty(oldPath);
+      return newPath;
+    });
+
     // Debounced background flush to IndexedDB.
     var syncing = false;
     var pending = false;
@@ -111,7 +146,12 @@
         return;
       }
 
-      setInterval(flushToIdb, 5000);
+      setInterval(function () {
+        if (dirty) {
+          dirty = false;
+          flushToIdb();
+        }
+      }, 5000);
 
       if (typeof window !== 'undefined') {
         window.addEventListener('pagehide', flushToIdb, { capture: true });

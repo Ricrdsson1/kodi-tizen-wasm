@@ -237,8 +237,21 @@ bool CProfileManager::Save() const
   for (const auto& profile : m_profiles)
     profile.Save(pRoot);
 
+#if defined(TARGET_WASM)
+  // Saved with the settings over and over (see CApplication::WasmRunIteration()), so the
+  // file is only written when something has changed.
+  TiXmlPrinter printer;
+  xmlDoc.Accept(&printer);
+  if (printer.Str() == m_savedXml)
+    return true;
+  if (!xmlDoc.SaveFile(file))
+    return false;
+  m_savedXml = printer.Str();
+  return true;
+#else
   // save the file
   return xmlDoc.SaveFile(file);
+#endif
 }
 
 void CProfileManager::Clear()
