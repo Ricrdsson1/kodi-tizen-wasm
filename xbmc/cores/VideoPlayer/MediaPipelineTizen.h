@@ -11,18 +11,24 @@
 #include "DVDCodecs/Video/DVDVideoCodec.h"
 #include "DVDMessageQueue.h"
 #include "DVDStreamInfo.h"
+#include "Interface/TimingConstants.h"
 #include "IVideoPlayer.h"
 #include "threads/Thread.h"
 
 #include "platform/wasm/tizen/TizenEMSS.h"
 
 #include <atomic>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
+struct AVCodecContext;
+struct AVFrame;
+struct AVPacket;
+struct SwrContext;
 class CBitstreamConverter;
 class CDVDClock;
 class CDVDOverlayContainer;
@@ -34,7 +40,8 @@ class CRenderManager;
  *
  * Demuxed packets are handed to the TV undecoded: it decodes them with its
  * hardware pipeline, keeps audio and video in sync and presents the video on a
- * plane below the GUI. Kodi's clock follows the TV's playback position.
+ * plane below the GUI. Kodi's clock follows the TV's playback position. Audio the
+ * TV cannot decode, such as DTS or TrueHD, is decoded here and handed over as PCM.
  */
 class CMediaPipelineTizen final : public CThread
 {
@@ -109,7 +116,35 @@ private:
               const uint8_t* data,
               int size,
               double pts,
-              bool keyFrame);
+              double dts,
+              bool keyFrame,
+              double duration = 0.0);
+
+  /*!
+   * \brief Hold a video packet at the start, until the decode times are known.
+   */
+  void HoldVideo(const std::shared_ptr<CDVDMsg>& msg, double pts, double dts);
+  /*!
+   * \brief Hand the packets that were held to the TV once their decode times are known.
+   * \return false if not all were taken
+   */
+  bool AppendHeldVideo();
+  //! Hand the held packets to the TV at the end of a stream.
+  void ReleaseHeldVideo();
+  bool AppendVideo(const DemuxPacket& packet, double pts, double dts);
+
+  /*!
+   * \brief Open the decoder of audio the TV is handed as PCM.
+   * \return false if there is no decoder for it
+   */
+  bool OpenAudioDecoder();
+  void CloseAudioDecoder();
+
+  /*!
+   * \brief Decode an audio packet into m_pcm.
+   * \return false if it could not be decoded
+   */
+  bool DecodeAudio(const DemuxPacket& packet);
 
   /*!
    * \brief Prepare the conversion of length-prefixed H.264/HEVC to Annex B.
@@ -140,6 +175,27 @@ private:
   std::vector<uint8_t> m_audioClearLeadKey;
   std::unique_ptr<CBitstreamConverter> m_bitstream;
   const DemuxPacket* m_convertedPacket{nullptr};
+  double m_lastVideoDts{DVD_NOPTS_VALUE}; // seconds, of the last packet the TV was given
+  struct HeldVideoPacket
+  {
+    std::shared_ptr<CDVDMsg> msg;
+    double pts; // seconds
+    double dts; // seconds, DVD_NOPTS_VALUE if unknown
+  };
+  std::deque<HeldVideoPacket> m_heldVideo;
+  bool m_videoDtsKnown{false};
+
+  // Audio decoded here, as interleaved signed 16 bit PCM.
+  AVCodecContext* m_audioDecoder{nullptr};
+  SwrContext* m_resampler{nullptr};
+  AVFrame* m_audioFrame{nullptr};
+  AVPacket* m_audioPacket{nullptr};
+  int m_pcmChannels{0};
+  int m_pcmRate{0};
+  std::vector<uint8_t> m_pcm;
+  int m_pcmSamples{0}; // per channel, in m_pcm
+  //! The packet m_pcm was decoded from, which the TV did not take yet
+  const DemuxPacket* m_pcmPacket{nullptr};
   // Set once the demuxer has flagged a key frame; until then they are looked for here.
   bool m_demuxerFlagsKeyFrames{false};
   // Largest picture the TV was told to expect.

@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <vector>
 
 #include <fmt/format.h>
@@ -37,6 +38,8 @@ extern "C"
 {
 #include <libavcodec/avcodec.h>
 #include <libavcodec/defs.h>
+#include <libavutil/channel_layout.h>
+#include <libswresample/swresample.h>
 }
 
 using namespace std::chrono_literals;
@@ -55,6 +58,15 @@ constexpr int MIN_CONFIG_HEIGHT = 1080;
 
 // Seconds of audio ahead of the playback position that count as a full buffer.
 constexpr double FULL_AUDIO_BUFFER = 2.0;
+
+// Audio the TV cannot decode is handed to it in this form.
+constexpr const char* PCM_MIME = "audio/webm; codecs=\"pcm\"";
+constexpr const char* PCM_SAMPLE_FORMAT = "SampleFormatS16";
+constexpr int PCM_MAX_CHANNELS = 8;
+constexpr int PCM_FALLBACK_RATE = 48000;
+
+// Video packets held at most at the start while their decode times are not known.
+constexpr size_t MAX_HELD_VIDEO = 16;
 
 const char* AudioMime(AVCodecID codec)
 {
@@ -277,6 +289,7 @@ CMediaPipelineTizen::CMediaPipelineTizen(CProcessInfo& processInfo,
 CMediaPipelineTizen::~CMediaPipelineTizen()
 {
   Unload();
+  CloseAudioDecoder();
 }
 
 bool CMediaPipelineTizen::Available()
@@ -428,9 +441,18 @@ void CMediaPipelineTizen::Flush(const bool sync)
   FlushVideoMessages();
   m_fedAudioPts = -1.0;
   m_fedVideoPts = -1.0;
+  m_lastVideoDts = DVD_NOPTS_VALUE;
+  m_heldVideo.clear();
+  m_videoDtsKnown = false;
   m_restarting = false;
   m_drainAudio = false;
   m_flushed = true;
+
+  m_pcmPacket = nullptr;
+  if (m_audioDecoder)
+    avcodec_flush_buffers(m_audioDecoder);
+  if (m_resampler)
+    swr_close(m_resampler);
 }
 
 bool CMediaPipelineTizen::AcceptsAudioData() const
@@ -563,9 +585,29 @@ bool CMediaPipelineTizen::Load()
   const char* sampleFormat =
       m_audioHint.codec == AV_CODEC_ID_MP3 ? "SampleFormatPlanarS16" : "SampleFormatPlanarF32";
   const char* channelLayout = ChannelLayout(m_audioHint.channels);
-  if (audioMime && tizen_emss_validate_audio(audioMime, sampleFormat, channelLayout,
-                                             m_audioHint.samplerate) == 0)
+  int sampleRate = m_audioHint.samplerate;
+  if (audioMime &&
+      tizen_emss_validate_audio(audioMime, sampleFormat, channelLayout, sampleRate) == 0)
     audioMime = nullptr;
+
+  CloseAudioDecoder();
+  if (m_hasAudio && m_audioHint.codec != AV_CODEC_ID_NONE && !audioMime && !DrmSession(m_audioHint))
+  {
+    if (OpenAudioDecoder())
+    {
+      channelLayout = ChannelLayout(m_pcmChannels);
+      if (tizen_emss_validate_audio(PCM_MIME, PCM_SAMPLE_FORMAT, channelLayout, m_pcmRate) == 0)
+        m_pcmRate = PCM_FALLBACK_RATE;
+      if (tizen_emss_validate_audio(PCM_MIME, PCM_SAMPLE_FORMAT, channelLayout, m_pcmRate) != 0)
+      {
+        audioMime = PCM_MIME;
+        sampleFormat = PCM_SAMPLE_FORMAT;
+        sampleRate = m_pcmRate;
+      }
+      else
+        CloseAudioDecoder();
+    }
+  }
   if (m_hasAudio && m_audioHint.codec != AV_CODEC_ID_NONE && !audioMime)
     CLog::LogF(LOGWARNING, "The TV cannot decode audio codec {}, playing without sound",
                avcodec_get_name(m_audioHint.codec));
@@ -592,11 +634,14 @@ bool CMediaPipelineTizen::Load()
   config.framerateDen = fpsScale;
   config.hasAudio = audioMime ? 1 : 0;
   config.audioMime = audioMime;
-  config.audioExtradata = m_audioHint.extradata.GetData();
-  config.audioExtradataSize = static_cast<int32_t>(m_audioHint.extradata.GetSize());
+  if (!m_audioDecoder)
+  {
+    config.audioExtradata = m_audioHint.extradata.GetData();
+    config.audioExtradataSize = static_cast<int32_t>(m_audioHint.extradata.GetSize());
+  }
   config.sampleFormat = sampleFormat;
   config.channelLayout = channelLayout;
-  config.sampleRate = m_audioHint.samplerate;
+  config.sampleRate = sampleRate;
 
   CLog::LogF(LOGDEBUG, "video {} {}x{}@{:.3f} extradata {}, audio {}, duration {:.1f}s", videoMime,
              m_videoHint.width, m_videoHint.height, fps, config.videoExtradataSize,
@@ -654,7 +699,15 @@ bool CMediaPipelineTizen::Load()
   m_processInfo.SetVideoDeintMethod("hardware");
   m_processInfo.SetVideoDAR(static_cast<float>(m_videoHint.aspect));
   m_processInfo.SetVideoFps(static_cast<float>(fps));
-  if (audioMime)
+  if (m_audioDecoder)
+  {
+    m_processInfo.SetAudioChannels(CAEUtil::GuessChLayout(m_pcmChannels));
+    m_processInfo.SetAudioSampleRate(m_pcmRate);
+    m_processInfo.SetAudioBitsPerSample(16);
+    m_processInfo.SetAudioDecoderName(
+        fmt::format("ff-{} (tizen-pcm)", avcodec_get_name(m_audioHint.codec)));
+  }
+  else if (audioMime)
   {
     if (m_audioHint.channellayout)
       m_processInfo.SetAudioChannels(CAEUtil::GetAEChannelLayout(m_audioHint.channellayout));
@@ -667,6 +720,9 @@ bool CMediaPipelineTizen::Load()
   }
 
   m_hasAudioTrack = audioMime != nullptr;
+  m_lastVideoDts = DVD_NOPTS_VALUE;
+  m_heldVideo.clear();
+  m_videoDtsKnown = false;
   m_demuxerFlagsKeyFrames = false;
   m_fedAudioPts = -1.0;
   m_fedVideoPts = -1.0;
@@ -752,12 +808,13 @@ bool CMediaPipelineTizen::Append(const int trackId,
                                  const uint8_t* data,
                                  const int size,
                                  const double pts,
-                                 const bool keyFrame)
+                                 const double dts,
+                                 const bool keyFrame,
+                                 double duration)
 {
-  const double dts = packet.dts == DVD_NOPTS_VALUE ? pts : ToSeconds(packet.dts);
-  const double duration = packet.duration > 0.0 ? ToSeconds(packet.duration)
-                                                : (trackId == m_state.videoTrack ? m_frameDuration
-                                                                                 : 0.02);
+  if (duration <= 0.0)
+    duration = packet.duration > 0.0 ? ToSeconds(packet.duration)
+                                     : (trackId == m_state.videoTrack ? m_frameDuration : 0.02);
 
   const TizenEmssFrameInfo* frame = trackId == m_state.videoTrack ? &m_frameInfo : nullptr;
 
@@ -825,30 +882,98 @@ bool CMediaPipelineTizen::FeedVideoData(const std::shared_ptr<CDVDMsg>& msg)
   if (!Restart(pts) || !m_state.videoOpen)
     return false;
 
-  const uint8_t* data = packet->pData;
-  int size = packet->iSize;
+  if (!AppendHeldVideo())
+    return false;
+
+  const double dts = packet->dts == DVD_NOPTS_VALUE ? DVD_NOPTS_VALUE : ToSeconds(packet->dts);
+  if (!m_videoDtsKnown)
+  {
+    HoldVideo(msg, pts, dts);
+    AppendHeldVideo();
+    return true;
+  }
+  return AppendVideo(*packet, pts, dts);
+}
+
+void CMediaPipelineTizen::HoldVideo(const std::shared_ptr<CDVDMsg>& msg, double pts, double dts)
+{
+  // Ahead of B-frames, the first packets are decoded before the stream starts. Demuxers
+  // other than the one for MPEG-TS raise these decode times to 0 or give none, and the
+  // TV stops decoding after packets whose decode times do not rise. So the first
+  // packets are held until the decode time rises, and theirs are counted back from it.
+  double knownDts = DVD_NOPTS_VALUE;
+  for (auto it = m_heldVideo.rbegin(); it != m_heldVideo.rend(); ++it)
+  {
+    if (it->dts != DVD_NOPTS_VALUE)
+    {
+      knownDts = it->dts;
+      break;
+    }
+  }
+  const bool rises = dts != DVD_NOPTS_VALUE && knownDts != DVD_NOPTS_VALUE && dts > knownDts;
+  if (!rises && m_heldVideo.size() < MAX_HELD_VIDEO)
+  {
+    m_heldVideo.push_back({msg, pts, dts});
+    return;
+  }
+
+  // Without a rise, the packets are given decode times a frame apart.
+  const size_t count = m_heldVideo.size();
+  const double first = m_heldVideo.empty() ? pts : m_heldVideo.front().pts;
+  for (size_t i = 0; i < count; ++i)
+    m_heldVideo[i].dts = rises ? dts - static_cast<double>(count - i) * m_frameDuration
+                               : first + static_cast<double>(i) * m_frameDuration;
+  m_heldVideo.push_back(
+      {msg, pts, rises ? dts : first + static_cast<double>(count) * m_frameDuration});
+  m_videoDtsKnown = true;
+}
+
+bool CMediaPipelineTizen::AppendHeldVideo()
+{
+  while (m_videoDtsKnown && !m_heldVideo.empty())
+  {
+    const HeldVideoPacket& held = m_heldVideo.front();
+    const DemuxPacket* packet =
+        std::static_pointer_cast<CDVDMsgDemuxerPacket>(held.msg)->GetPacket();
+    if (!AppendVideo(*packet, held.pts, held.dts))
+      return false;
+    m_heldVideo.pop_front();
+  }
+  return true;
+}
+
+bool CMediaPipelineTizen::AppendVideo(const DemuxPacket& packet, double pts, double dts)
+{
+  const uint8_t* data = packet.pData;
+  int size = packet.iSize;
   if (m_bitstream)
   {
     // A packet that the TV did not take yet is offered again as it was converted.
-    if (m_convertedPacket != packet)
+    if (m_convertedPacket != &packet)
     {
-      if (!m_bitstream->Convert(packet->pData, packet->iSize))
+      if (!m_bitstream->Convert(packet.pData, packet.iSize))
         return true;
-      m_convertedPacket = packet;
+      m_convertedPacket = &packet;
     }
     data = m_bitstream->GetConvertBuffer();
     size = m_bitstream->GetConvertSize();
   }
 
-  if (packet->m_keyFrame)
+  // The decode time has to rise and must not pass the presentation time.
+  if (dts == DVD_NOPTS_VALUE)
+    dts = pts;
+  if (m_lastVideoDts != DVD_NOPTS_VALUE && dts <= m_lastVideoDts)
+    dts = std::min(m_lastVideoDts + 0.001, pts);
+
+  if (packet.m_keyFrame)
     m_demuxerFlagsKeyFrames = true;
-  const bool keyFrame = m_demuxerFlagsKeyFrames ? packet->m_keyFrame
+  const bool keyFrame = m_demuxerFlagsKeyFrames ? packet.m_keyFrame
                                                 : IsKeyFrame(m_videoHint.codec, data, size);
-  if (!Append(m_state.videoTrack, *packet, data, size, pts, keyFrame))
+  if (!Append(m_state.videoTrack, packet, data, size, pts, dts, keyFrame))
     return false;
 
   m_convertedPacket = nullptr;
-
+  m_lastVideoDts = dts;
   m_fedVideoPts = pts;
   return true;
 }
@@ -867,10 +992,151 @@ bool CMediaPipelineTizen::FeedAudioData(const std::shared_ptr<CDVDMsg>& msg)
     return false;
 
   const double pts = ToSeconds(packet->pts);
-  if (!Append(m_state.audioTrack, *packet, packet->pData, packet->iSize, pts, true))
+  if (m_audioDecoder)
+  {
+    // A packet that the TV did not take yet is offered again as it was decoded.
+    if (m_pcmPacket != packet)
+    {
+      if (!DecodeAudio(*packet))
+        return true;
+      m_pcmPacket = packet;
+    }
+    if (m_pcmSamples > 0)
+    {
+      const double duration = static_cast<double>(m_pcmSamples) / m_pcmRate;
+      if (!Append(m_state.audioTrack, *packet, m_pcm.data(), static_cast<int>(m_pcm.size()), pts,
+                  pts, true, duration))
+        return false;
+    }
+    m_pcmPacket = nullptr;
+  }
+  else if (!Append(m_state.audioTrack, *packet, packet->pData, packet->iSize, pts,
+                   packet->dts == DVD_NOPTS_VALUE ? pts : ToSeconds(packet->dts), true))
     return false;
 
   m_fedAudioPts = pts;
+  return true;
+}
+
+bool CMediaPipelineTizen::OpenAudioDecoder()
+{
+  const AVCodec* codec = avcodec_find_decoder(m_audioHint.codec);
+  if (!codec)
+    return false;
+
+  m_audioDecoder = avcodec_alloc_context3(codec);
+  m_audioFrame = av_frame_alloc();
+  m_audioPacket = av_packet_alloc();
+  if (!m_audioDecoder || !m_audioFrame || !m_audioPacket)
+  {
+    CloseAudioDecoder();
+    return false;
+  }
+
+  m_audioDecoder->sample_rate = m_audioHint.samplerate;
+  if (m_audioHint.channellayout)
+    av_channel_layout_from_mask(&m_audioDecoder->ch_layout, m_audioHint.channellayout);
+  else if (m_audioHint.channels > 0)
+    av_channel_layout_default(&m_audioDecoder->ch_layout, m_audioHint.channels);
+  m_audioDecoder->bit_rate = m_audioHint.bitrate;
+  m_audioDecoder->block_align = m_audioHint.blockalign;
+  m_audioDecoder->bits_per_coded_sample = m_audioHint.bitspersample;
+  if (m_audioHint.extradata.GetSize() > 0)
+  {
+    const size_t size = m_audioHint.extradata.GetSize();
+    m_audioDecoder->extradata =
+        static_cast<uint8_t*>(av_mallocz(size + AV_INPUT_BUFFER_PADDING_SIZE));
+    if (m_audioDecoder->extradata)
+    {
+      memcpy(m_audioDecoder->extradata, m_audioHint.extradata.GetData(), size);
+      m_audioDecoder->extradata_size = static_cast<int>(size);
+    }
+  }
+
+  if (avcodec_open2(m_audioDecoder, codec, nullptr) < 0)
+  {
+    CLog::LogF(LOGERROR, "Cannot open the {} decoder", codec->name);
+    CloseAudioDecoder();
+    return false;
+  }
+
+  const int channels = m_audioDecoder->ch_layout.nb_channels > 0
+                           ? m_audioDecoder->ch_layout.nb_channels
+                           : m_audioHint.channels;
+  m_pcmChannels = std::clamp(channels, 1, PCM_MAX_CHANNELS);
+  m_pcmRate = m_audioDecoder->sample_rate > 0 ? m_audioDecoder->sample_rate : PCM_FALLBACK_RATE;
+  m_pcmPacket = nullptr;
+  CLog::LogF(LOGINFO, "Decoding {} for the TV, {} channels at {} Hz", codec->name, m_pcmChannels,
+             m_pcmRate);
+  return true;
+}
+
+void CMediaPipelineTizen::CloseAudioDecoder()
+{
+  swr_free(&m_resampler);
+  av_packet_free(&m_audioPacket);
+  av_frame_free(&m_audioFrame);
+  avcodec_free_context(&m_audioDecoder);
+  m_pcmPacket = nullptr;
+  m_pcm.clear();
+  m_pcmSamples = 0;
+}
+
+bool CMediaPipelineTizen::DecodeAudio(const DemuxPacket& packet)
+{
+  m_pcm.clear();
+  m_pcmSamples = 0;
+
+  // Demux packets come with the padding FFmpeg needs.
+  m_audioPacket->data = packet.pData;
+  m_audioPacket->size = packet.iSize;
+  const int sent = avcodec_send_packet(m_audioDecoder, m_audioPacket);
+  av_packet_unref(m_audioPacket);
+  if (sent < 0)
+    return false;
+
+  while (avcodec_receive_frame(m_audioDecoder, m_audioFrame) == 0)
+  {
+    // The format of the decoded samples is only known now; the TV gets the
+    // channel count and rate it was told about at the start.
+    if (!m_resampler || !swr_is_initialized(m_resampler))
+    {
+      AVChannelLayout out;
+      av_channel_layout_default(&out, m_pcmChannels);
+      swr_free(&m_resampler);
+      const int ret = swr_alloc_set_opts2(&m_resampler, &out, AV_SAMPLE_FMT_S16, m_pcmRate,
+                                          &m_audioFrame->ch_layout,
+                                          static_cast<AVSampleFormat>(m_audioFrame->format),
+                                          m_audioFrame->sample_rate, 0, nullptr);
+      av_channel_layout_uninit(&out);
+      if (ret < 0 || swr_init(m_resampler) < 0)
+      {
+        CLog::LogF(LOGERROR, "Cannot convert {} audio to PCM",
+                   avcodec_get_name(m_audioHint.codec));
+        swr_free(&m_resampler);
+        av_frame_unref(m_audioFrame);
+        return false;
+      }
+    }
+
+    const int capacity = swr_get_out_samples(m_resampler, m_audioFrame->nb_samples);
+    const size_t frameBytes = static_cast<size_t>(m_pcmChannels) * 2;
+    const size_t offset = m_pcm.size();
+    m_pcm.resize(offset + static_cast<size_t>(std::max(capacity, 0)) * frameBytes);
+    uint8_t* out = m_pcm.data() + offset;
+    const int converted =
+        swr_convert(m_resampler, &out, capacity,
+                    const_cast<const uint8_t**>(m_audioFrame->extended_data),
+                    m_audioFrame->nb_samples);
+    av_frame_unref(m_audioFrame);
+    if (converted < 0)
+    {
+      m_pcm.resize(offset);
+      return false;
+    }
+    m_pcm.resize(offset + static_cast<size_t>(converted) * frameBytes);
+    m_pcmSamples += converted;
+  }
   return true;
 }
 
@@ -933,6 +1199,25 @@ void CMediaPipelineTizen::ProcessOverlays(const double pts) const
   }
 }
 
+void CMediaPipelineTizen::ReleaseHeldVideo()
+{
+  // A stream that ends while its first packets are held.
+  std::unique_lock lock(m_videoFeedMutex);
+  if (!m_videoDtsKnown && !m_heldVideo.empty())
+  {
+    const double first = m_heldVideo.front().pts;
+    for (size_t i = 0; i < m_heldVideo.size(); ++i)
+      m_heldVideo[i].dts = first + static_cast<double>(i) * m_frameDuration;
+    m_videoDtsKnown = true;
+  }
+  while (!m_bStop && !m_flushed && !AppendHeldVideo())
+  {
+    lock.unlock();
+    std::this_thread::sleep_for(10ms);
+    lock.lock();
+  }
+}
+
 void CMediaPipelineTizen::Process()
 {
   while (!m_bStop)
@@ -962,6 +1247,7 @@ void CMediaPipelineTizen::Process()
     }
     else if (msg->IsType(CDVDMsg::VIDEO_DRAIN))
     {
+      ReleaseHeldVideo();
       tizen_emss_end_of_track(m_state.videoTrack, m_state.sessionId);
       m_drainAudio = true;
     }

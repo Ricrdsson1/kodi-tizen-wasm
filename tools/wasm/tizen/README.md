@@ -8,8 +8,11 @@ It has been run on one TV only: a 2025 model on Tizen 9.0 (Chromium 120).
 * GUI, remote control, audio through the browser audio worklet.
 * HTTP(S) through the browser's `fetch()` (`xbmc/platform/wasm/network`).
 * H.264, HEVC, VP8, VP9 and AV1 decoded by the TV through the Tizen WASM Player
-  (`xbmc/cores/VideoPlayer/MediaPipelineTizen.cpp`), with AAC, MP3, AC-3, E-AC-3 or
-  Opus audio. Other video codecs are decoded in software, which is too slow for HD.
+  (`xbmc/cores/VideoPlayer/MediaPipelineTizen.cpp`). Other video codecs are decoded in
+  software, which is too slow for HD.
+* AAC, MP3, AC-3, E-AC-3 and Opus audio decoded by the TV. Other audio, such as DTS,
+  TrueHD, FLAC, Vorbis, MP2 or PCM, is decoded by Kodi and handed to the TV as PCM, with
+  up to 8 channels.
 * HLS, read through Kodi's file layer instead of FFmpeg's network code.
 * Unencrypted DASH through InputStream Adaptive, including changes of quality while
   playing.
@@ -30,8 +33,7 @@ It has been run on one TV only: a 2025 model on Tizen 9.0 (Chromium 120).
 
 * SMB, NFS, FTP and anything else that needs a socket; the embedded web server.
 * Python add-ons that open their own connections (`urllib`, `requests`).
-* Audio the TV player cannot decode (DTS, MP2, TrueHD, ...) next to hardware decoded
-  video: the video plays without sound.
+* Passing audio through to an amplifier: the TV gets DTS and TrueHD as PCM.
 * `User-Agent`, `Cookie` and `Referer` request headers, which a browser does not let a
   page set.
 * Large add-ons, such as most skins other than Confluence: the TV gives the app 80 MB

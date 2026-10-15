@@ -16,6 +16,8 @@
     <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/drmplay"/>
     <tizen:privilege name="http://developer.samsung.com/privilege/network.public"/>
+    <!-- The keyboard of the TV is drawn over the app instead of shrinking it. -->
+    <tizen:metadata key="http://samsung.com/tv/metadata/use.conformant" value="floating"/>
     <tizen:profile name="tv"/>
     <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable"
                    encryption="disable" install-location="auto" hwkey-event="enable"/>
