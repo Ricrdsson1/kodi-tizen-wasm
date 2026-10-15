@@ -30,6 +30,10 @@
 #include "utils/log.h"
 #include "video/VideoFileItemClassify.h"
 
+#if defined(TARGET_WASM)
+#include "platform/wasm/player/WebPlayer.h"
+#endif
+
 #include <mutex>
 #include <sstream>
 #include <utility>
@@ -129,6 +133,15 @@ void CPlayerCoreFactory::GetPlayers(const CFileItem& item, std::vector<std::stri
         defaultInputstreamPlayerOverride = ForcedPlayer::AUDIO_DEFAULT;
     }
   }
+
+#if defined(TARGET_WASM)
+  // The browser decrypts DRM protected streams reliably only in its own media pipeline.
+  if (CWebPlayer::IsDrmItem(item))
+  {
+    CLog::Log(LOGDEBUG, "CPlayerCoreFactory::GetPlayers: DRM protected stream, adding WebPlayer");
+    players.emplace_back("WebPlayer");
+  }
+#endif
 
   std::vector<std::string>validPlayers;
   GetPlayers(validPlayers);
@@ -381,6 +394,11 @@ bool CPlayerCoreFactory::LoadConfiguration(const std::string &file, bool clear)
     auto retroPlayer = std::make_unique<CPlayerCoreConfig>("RetroPlayer", "game", nullptr);
     retroPlayer->m_bPlaysGame = true;
     m_vecPlayerConfigs.emplace_back(std::move(retroPlayer));
+
+#if defined(TARGET_WASM)
+    // Only chosen for DRM protected streams (see GetPlayers()), so it plays nothing else.
+    m_vecPlayerConfigs.emplace_back(std::make_unique<CPlayerCoreConfig>("WebPlayer", "web", nullptr));
+#endif
   }
 
   if (StringUtils::CompareNoCase(pConfig->Value(), "playercorefactory") != 0)

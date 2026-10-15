@@ -4,6 +4,7 @@ set_property(TARGET ${APP_NAME_LC} APPEND PROPERTY LINK_DEPENDS
   ${CMAKE_SOURCE_DIR}/xbmc/windowing/wasm/webgl_commit.js
   ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/tizen/tizen_emss.js
   ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/tizen/tizen_drm.js
+  ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/player/web_player.js
   ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/network/tizen_sockets.js)
 if(ENABLE_WASM_DEV_PROXY)
   set_property(TARGET ${APP_NAME_LC} APPEND PROPERTY LINK_DEPENDS

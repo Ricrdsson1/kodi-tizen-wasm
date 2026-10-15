@@ -21,17 +21,15 @@ Player, which TVs before 2021 (Tizen 6.0) do not have at all.
 * HLS, read through Kodi's file layer instead of FFmpeg's network code.
 * Unencrypted DASH through InputStream Adaptive, including changes of quality while
   playing.
-* Widevine protected streams, experimentally and not watchable yet: a decrypter added
-  to InputStream Adaptive (`tools/wasm/tizen/inputstream.adaptive`) runs the license
-  exchange through the browser's Encrypted Media Extensions, and the TV decrypts the
-  packets. Audio plays, but the picture stutters and jumps as soon as it is encrypted,
-  although the packets decrypt correctly (checked against the Axinom test vectors).
-  The TV refuses `ElementaryMediaTrack.setMediaKeySession()` for Widevine and
-  PlayReady alike, so the keys are attached to the media element instead. The TV also
-  fails when the keys of a stream are spread over several sessions, so a stream whose
-  key came with an earlier license shares that session, and when encrypted audio
-  follows clear audio, so the clear lead of encrypted audio is passed as encrypted
-  packets without encrypted bytes.
+* DRM protected streams (Widevine, PlayReady, ClearKey), DASH and HLS: an item for
+  InputStream Adaptive with DRM settings (`drm_legacy`, `drm` or `license_key`) is played
+  by `CWebPlayer` (`xbmc/platform/wasm/player`) instead of VideoPlayer. It hands the
+  manifest and the license settings to [Shaka Player](https://github.com/shaka-project/shaka-player)
+  in an HTML5 video element under the GUI, so Kodi's OSD and controls stay in use.
+  The TV decrypts only in its own media pipeline: packets the Tizen WASM Player gets
+  encrypted come out garbled on a Tizen 9 TV, although they decrypt correctly with the
+  same key elsewhere, and its tracks refuse a DRM session (`setMediaKeySession()`).
+  Kodi's audio settings and subtitle styles do not apply to these streams.
 * Binary add-ons linked into the executable (see below).
 
 ## What does not

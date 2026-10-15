@@ -36,6 +36,18 @@ done
 cp "$KODI_DIR/tools/wasm/kodi.html" "$STAGE_DIR/index.html"
 cp "$KODI_DIR/media/splash.jpg" "$STAGE_DIR/media/"
 cp "$KODI_DIR/media/icon256x256.png" "$STAGE_DIR/icon.png"
+
+# Shaka Player (Apache-2.0) plays DRM protected streams (xbmc/platform/wasm/player).
+SHAKA_VERSION=4.3.6
+SHAKA_SHA256=d7d39910b429597a05c81d4b8de1991ff4860dc91cc9c4c9ed710395dd1de7fa
+SHAKA_JS=$BUILD_DIR/shaka-player-$SHAKA_VERSION.compiled.js
+if ! echo "$SHAKA_SHA256  $SHAKA_JS" | sha256sum -c --status 2>/dev/null; then
+  curl -fsSL -o "$SHAKA_JS" \
+    "https://cdnjs.cloudflare.com/ajax/libs/shaka-player/$SHAKA_VERSION/shaka-player.compiled.js"
+  echo "$SHAKA_SHA256  $SHAKA_JS" | sha256sum -c --status ||
+    { echo "error: $SHAKA_JS does not match its checksum" >&2; exit 1; }
+fi
+cp "$SHAKA_JS" "$STAGE_DIR/shaka-player.compiled.js"
 sed "s/@APP_VERSION@/$VERSION/" "$SRC_DIR/config.xml" > "$STAGE_DIR/config.xml"
 
 OUTPUT=$BUILD_DIR/Kodi.wgt

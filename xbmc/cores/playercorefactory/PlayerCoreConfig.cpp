@@ -18,6 +18,7 @@
 #endif
 #ifdef TARGET_WASM
 #include "VideoPlayerTizen.h"
+#include "platform/wasm/player/WebPlayer.h"
 #endif
 #ifdef TARGET_WEBOS
 #include "VideoPlayerWebOS.h"
@@ -72,6 +73,12 @@ std::shared_ptr<IPlayer> CPlayerCoreConfig::CreatePlayer(IPlayerCallback& callba
   {
     player = std::make_shared<CExternalPlayer>(callback);
   }
+#if defined(TARGET_WASM)
+  else if (m_type.compare("web") == 0)
+  {
+    player = std::make_shared<CWebPlayer>(callback);
+  }
+#endif
 
 #if defined(HAS_UPNP)
   else if (m_type.compare("remote") == 0)

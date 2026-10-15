@@ -73,6 +73,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     "SHELL:--js-library ${CMAKE_SOURCE_DIR}/xbmc/windowing/wasm/webgl_commit.js"
     "SHELL:--js-library ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/tizen/tizen_emss.js"
     "SHELL:--js-library ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/tizen/tizen_drm.js"
+    "SHELL:--js-library ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/player/web_player.js"
     # BSD sockets over the Tizen Sockets Extension; falls back to the upstream
     # implementation in ordinary browsers.
     "SHELL:--js-library ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/network/tizen_sockets.js"
