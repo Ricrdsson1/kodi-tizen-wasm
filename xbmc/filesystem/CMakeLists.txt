@@ -183,6 +183,15 @@ if(TARGET ${APP_NAME_LC}::NFS)
                       NFSFile.h)
 endif()
 
+if(TARGET ${APP_NAME_LC}::SMB2)
+  list(APPEND SOURCES SMB2Connection.cpp
+                      SMB2Directory.cpp
+                      SMB2File.cpp)
+  list(APPEND HEADERS SMB2Connection.h
+                      SMB2Directory.h
+                      SMB2File.h)
+endif()
+
 if(ENABLE_UPNP)
   list(APPEND SOURCES NptXbmcFile.cpp
                       UPnPDirectory.cpp

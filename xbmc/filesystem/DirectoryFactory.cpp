@@ -34,6 +34,9 @@
 #ifdef HAS_FILESYSTEM_NFS
 #include "NFSDirectory.h"
 #endif
+#ifdef HAS_FILESYSTEM_SMB2
+#include "SMB2Directory.h"
+#endif
 #include "PVRDirectory.h"
 #include "PlaylistDirectory.h"
 #include "PluginDirectory.h"
@@ -246,6 +249,10 @@ IDirectory* CDirectoryFactory::Create(const CURL& url)
 #endif
 #ifdef HAS_FILESYSTEM_NFS
   if (url.IsProtocol("nfs")) return new CNFSDirectory();
+#endif
+#if defined(HAS_FILESYSTEM_SMB2) && !defined(HAS_FILESYSTEM_SMB)
+  if (url.IsProtocol("smb"))
+    return new CSMB2Directory();
 #endif
 #ifdef HAS_OPTICAL_DRIVE
   if (url.IsProtocol("dvd"))

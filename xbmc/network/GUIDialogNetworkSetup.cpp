@@ -457,6 +457,8 @@ void CGUIDialogNetworkSetup::UpdateAvailableProtocols()
 #ifdef HAS_FILESYSTEM_SMB
   // most popular protocol at the first place
   m_protocols.emplace_back(true, true, true, false, true, 0, "smb", 20171, "");
+#elif defined(HAS_FILESYSTEM_SMB2)
+  m_protocols.emplace_back(true, true, true, true, true, 445, "smb", 20171, "");
 #endif
   // protocols from vfs addon next
   if (CServiceBroker::IsAddonInterfaceUp())

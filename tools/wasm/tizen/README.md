@@ -31,11 +31,16 @@ Player, which TVs before 2021 (Tizen 6.0) do not have at all.
   same key elsewhere, and its tracks refuse a DRM session (`setMediaKeySession()`).
   Kodi's audio settings and subtitle styles do not apply to these streams.
 * Binary add-ons linked into the executable (see below).
+* Network shares over SMB 2 and 3 (`smb://`) through [libsmb2](https://github.com/sahlberg/libsmb2)
+  (`xbmc/filesystem/SMB2File.cpp`), as Samba's libsmbclient does not build for
+  WebAssembly. A server has to be given by name or address, with a port if it is not
+  445: servers are not discovered on the network. SMB 1 is not supported.
 * Python add-ons that open their own connections (`urllib`, `requests`).
 
 ## What does not
 
-* SMB, NFS, FTP and anything else that needs a socket; the embedded web server.
+* The embedded web server, and anything else that has to accept connections.
+* NFS and FTP are built in but have not been tried against a server yet.
 * Passing audio through to an amplifier: the TV gets DTS and TrueHD as PCM.
 * `User-Agent`, `Cookie` and `Referer` request headers, which a browser does not let a
   page set.

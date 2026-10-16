@@ -1,0 +1,13 @@
+--- a/lib/compat.h
++++ b/lib/compat.h
+@@ -631,6 +631,10 @@
+ #include <stdint.h>
+ #endif
+ 
++#ifdef __EMSCRIPTEN__
++#include <stdint.h>
++#endif
++
+ #ifdef __vita__
+ 
+ #include <netinet/in.h>

@@ -45,6 +45,9 @@
 #ifdef HAS_FILESYSTEM_NFS
 #include "NFSFile.h"
 #endif
+#ifdef HAS_FILESYSTEM_SMB2
+#include "SMB2File.h"
+#endif
 #if defined(TARGET_ANDROID)
 #include "platform/android/filesystem/AndroidAppFile.h"
 #endif
@@ -183,6 +186,10 @@ IFile* CFileFactory::CreateLoader(const CURL& url)
 #endif
 #ifdef HAS_FILESYSTEM_NFS
   else if (url.IsProtocol("nfs")) return new CNFSFile();
+#endif
+#if defined(HAS_FILESYSTEM_SMB2) && !defined(HAS_FILESYSTEM_SMB)
+  else if (url.IsProtocol("smb"))
+    return new CSMB2File();
 #endif
 #ifdef HAS_UPNP
   else if (url.IsProtocol("upnp")) return new CUPnPFile();
