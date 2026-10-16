@@ -96,6 +96,12 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL GNU)
   target_compile_options(python_binding PRIVATE -Wno-subobject-linkage)
 endif()
 
+# The Python bindings convert arguments by trying types and catching what fails, so they
+# need C++ exceptions, which the WASM build otherwise leaves out.
+if(CORE_SYSTEM_NAME STREQUAL wasm)
+  target_compile_options(python_binding PRIVATE "SHELL:-sDISABLE_EXCEPTION_CATCHING=0")
+endif()
+
 # Add target dependencies to lib
 core_target_link_libraries(python_binding)
 # Link this target lib to core

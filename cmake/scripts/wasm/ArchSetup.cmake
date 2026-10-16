@@ -107,6 +107,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     message(STATUS "WASM: Debug build — SAFE_HEAP + DWARF symbols + source maps enabled")
   else()
     add_link_options("SHELL:-sASSERTIONS=1")
+    # Code built with exception catching (the Python bindings) catches the exceptions it
+    # throws; everywhere else a C++ exception still ends the program.
+    add_link_options("SHELL:-sDISABLE_EXCEPTION_CATCHING=0")
   endif()
 
   if(ENABLE_WASM_PROFILING)

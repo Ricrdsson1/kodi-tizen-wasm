@@ -31,11 +31,11 @@ Player, which TVs before 2021 (Tizen 6.0) do not have at all.
   same key elsewhere, and its tracks refuse a DRM session (`setMediaKeySession()`).
   Kodi's audio settings and subtitle styles do not apply to these streams.
 * Binary add-ons linked into the executable (see below).
+* Python add-ons that open their own connections (`urllib`, `requests`).
 
 ## What does not
 
 * SMB, NFS, FTP and anything else that needs a socket; the embedded web server.
-* Python add-ons that open their own connections (`urllib`, `requests`).
 * Passing audio through to an amplifier: the TV gets DTS and TrueHD as PCM.
 * `User-Agent`, `Cookie` and `Referer` request headers, which a browser does not let a
   page set.

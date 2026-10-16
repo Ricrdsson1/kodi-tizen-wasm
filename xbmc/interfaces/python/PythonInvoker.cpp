@@ -671,6 +671,21 @@ void CPythonInvoker::onInitialization()
     if (PyRun_SimpleString(runscript) == -1)
       CLog::Log(LOGFATAL, "CPythonInvoker({}, {}): initialize error", GetId(), m_sourceFile);
   }
+
+#if defined(TARGET_WASM)
+  // In a browser, urllib3 (and so requests) switches to its backend for Pyodide, which
+  // needs Pyodide's js module. This Python has sockets of its own, which urllib3 uses
+  // as everywhere else once that backend is left out.
+  static constexpr const char* WASM_INIT = "import sys, types\n"
+                                           "_m = types.ModuleType('urllib3.contrib.emscripten')\n"
+                                           "_m.inject_into_urllib3 = lambda: None\n"
+                                           "_m.extract_from_urllib3 = lambda: None\n"
+                                           "sys.modules['urllib3.contrib.emscripten'] = _m\n"
+                                           "del _m\n";
+  if (PyRun_SimpleString(WASM_INIT) == -1)
+    CLog::Log(LOGERROR, "CPythonInvoker({}, {}): WASM initialization failed", GetId(),
+              m_sourceFile);
+#endif
 }
 
 void CPythonInvoker::onPythonModuleInitialization(void* moduleDict)

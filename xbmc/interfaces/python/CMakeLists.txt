@@ -18,3 +18,9 @@ set(HEADERS AddonPythonInvoker.h
             XBPython.h)
 
 core_add_library(python_interface)
+
+# The Python bindings convert arguments by trying types and catching what fails, so they
+# need C++ exceptions, which the WASM build otherwise leaves out.
+if(CORE_SYSTEM_NAME STREQUAL wasm)
+  target_compile_options(python_interface PRIVATE "SHELL:-sDISABLE_EXCEPTION_CATCHING=0")
+endif()
