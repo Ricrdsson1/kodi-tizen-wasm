@@ -68,7 +68,7 @@ private:
   wayland::tizen_policy_t m_policy;
   wayland::tizen_visibility_t m_visibility;
   std::atomic<uint32_t> m_resourceId{0};
-  bool m_hdrDisplay{false}; //!< what the TV says of itself, as webapis.avinfo.isHdrTvSupport()
+  CHDRCapabilities m_hdrCaps; //!< the HDR formats the TV shows
 
   std::mutex m_keysLock;
   std::vector<uint32_t> m_remoteKeys; //!< keycodes to grab, from the compositor's keymap

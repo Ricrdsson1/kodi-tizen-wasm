@@ -25,9 +25,13 @@
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
+#include <fstream>
 #include <map>
+#include <optional>
 #include <regex>
 #include <string_view>
+#include <vector>
 
 #include <csignal>
 
@@ -73,22 +77,156 @@ constexpr std::array<std::string_view, 20> REMOTE_KEYS = {
 // tizen_keyrouter mode for a key the window has registered, as a web app's registerKey()
 constexpr uint32_t KEYGRAB_REGISTERED = 5;
 
-// Whether the TV shows HDR video, from the feature key that Samsung's web API
-// webapis.avinfo.isHdrTvSupport() reads. The TV's compositor has no colour management
-// protocol to tell it.
-bool TvSupportsHdr()
+// Feature keys of the TV, as Samsung's web APIs read them
+template<typename T>
+std::optional<T> Feature(const char* key, const char* getter)
 {
   void* lib = dlopen("libcapi-system-info.so.0", RTLD_NOW);
   if (!lib)
-    return false;
-  using GetCustomBool = int (*)(const char*, bool*);
-  auto getCustomBool = reinterpret_cast<GetCustomBool>(dlsym(lib, "system_info_get_custom_bool"));
-  bool supported = false;
-  const int ret =
-      getCustomBool ? getCustomBool("com.samsung/featureconf/hdr_support", &supported) : -1;
+    return {};
+  using Get = int (*)(const char*, T*);
+  auto get = reinterpret_cast<Get>(dlsym(lib, getter));
+  T value{};
+  const int ret = get ? get(key, &value) : -1;
   dlclose(lib);
-  CLog::Log(LOGINFO, "Tizen: the TV {} HDR video", ret == 0 && supported ? "shows" : "does not show");
-  return ret == 0 && supported;
+  if (ret != 0)
+    return {};
+  return value;
+}
+
+bool FeatureBool(const char* key)
+{
+  return Feature<bool>(key, "system_info_get_custom_bool").value_or(false);
+}
+
+int FeatureInt(const char* key)
+{
+  return Feature<int>(key, "system_info_get_custom_int").value_or(0);
+}
+
+struct EdidHdr
+{
+  bool hdr10{false};
+  bool hlg{false};
+  bool hdr10Plus{false};
+  bool dolbyVision{false};
+};
+
+// The HDR formats an EDID announces: the EOTFs of its HDR static metadata block, and the
+// vendor video blocks of HDR10+ and Dolby Vision. The TV keeps its EDIDs as hex text.
+std::optional<EdidHdr> ReadEdidHdr(const std::filesystem::path& path)
+{
+  std::ifstream file(path, std::ios::binary);
+  const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  std::vector<uint8_t> edid;
+  if (text.size() >= 256 &&
+      std::all_of(text.begin(), text.begin() + 16, [](char c) { return std::isxdigit(c); }))
+  {
+    for (size_t i = 0; i + 1 < text.size() && std::isxdigit(text[i]) && std::isxdigit(text[i + 1]);
+         i += 2)
+      edid.push_back(static_cast<uint8_t>(std::stoi(text.substr(i, 2), nullptr, 16)));
+  }
+  else
+    edid.assign(text.begin(), text.end());
+
+  static constexpr uint8_t HEADER[] = {0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00};
+  if (edid.size() < 128 || !std::equal(std::begin(HEADER), std::end(HEADER), edid.begin()))
+    return {};
+
+  EdidHdr hdr;
+  for (size_t ext = 128; ext + 128 <= edid.size(); ext += 128)
+  {
+    if (edid[ext] != 0x02) // CTA-861 extension
+      continue;
+    const size_t end = std::min<size_t>(ext + edid[ext + 2], ext + 127);
+    for (size_t i = ext + 4; i < end;)
+    {
+      const int tag = edid[i] >> 5;
+      const size_t length = edid[i] & 0x1f;
+      if (i + length >= end)
+        break;
+      const uint8_t* data = &edid[i + 1];
+      if (tag == 7 && length >= 3 && data[0] == 6) // HDR static metadata
+      {
+        hdr.hdr10 |= (data[1] & 0x04) != 0; // SMPTE ST 2084
+        hdr.hlg |= (data[1] & 0x08) != 0;
+      }
+      else if (tag == 7 && length >= 4 && data[0] == 1) // vendor specific video
+      {
+        const uint32_t oui = data[1] | (data[2] << 8) | (data[3] << 16);
+        hdr.hdr10Plus |= oui == 0x90848b;
+        hdr.dolbyVision |= oui == 0x00d046;
+      }
+      i += length + 1;
+    }
+  }
+  return hdr;
+}
+
+// The HDR formats the TV shows. The TV only says whether it shows HDR at all; which
+// formats it takes is in the EDIDs it gives sources on its HDMI inputs. The firmware holds
+// them for a range of models, as /lib/firmware/hdmiedid/<set>/<HDMI mode>/hdmi<n>, the sets
+// named after the panel (2K_, 4K_, 8K_) and monitors (_MNT_). A format counts when every set
+// for this kind of display announces it in one of its modes.
+CHDRCapabilities TvHdrCapabilities()
+{
+  CHDRCapabilities caps;
+  if (!FeatureBool("com.samsung/featureconf/hdr_support"))
+  {
+    CLog::Log(LOGINFO, "Tizen: the TV does not show HDR video");
+    return caps;
+  }
+
+  namespace fs = std::filesystem;
+  const bool monitor = FeatureBool("com.samsung/featureconf/product.smart_monitor_feature_support");
+  const int width = FeatureInt("com.samsung/featureconf/panel_resolution_width");
+  const std::string panel = width >= 7680 ? "8K_" : width >= 3840 ? "4K_" : width > 0 ? "2K_" : "";
+  std::optional<EdidHdr> tv;
+  std::error_code ec;
+  for (const auto& set : fs::directory_iterator("/lib/firmware/hdmiedid", ec))
+  {
+    const std::string name = set.path().filename().string();
+    if ((name.find("_MNT_") != std::string::npos) != monitor || !name.starts_with(panel))
+      continue;
+    std::optional<EdidHdr> best;
+    for (const auto& file : fs::recursive_directory_iterator(set.path(), ec))
+    {
+      if (!file.is_regular_file())
+        continue;
+      if (const auto hdr = ReadEdidHdr(file.path()))
+      {
+        EdidHdr& b = best ? *best : best.emplace();
+        b.hdr10 |= hdr->hdr10;
+        b.hlg |= hdr->hlg;
+        b.hdr10Plus |= hdr->hdr10Plus;
+        b.dolbyVision |= hdr->dolbyVision;
+      }
+    }
+    if (!best)
+      continue;
+    CLog::Log(LOGDEBUG, "Tizen: EDIDs {}: HDR10 {} HLG {} HDR10+ {} Dolby Vision {}", name,
+              best->hdr10, best->hlg, best->hdr10Plus, best->dolbyVision);
+    if (!tv)
+      tv = best;
+    tv->hdr10 &= best->hdr10;
+    tv->hlg &= best->hlg;
+    tv->hdr10Plus &= best->hdr10Plus;
+    tv->dolbyVision &= best->dolbyVision;
+  }
+
+  // HDR at all means HDR10
+  caps.SetHDR10();
+  if (tv && tv->hlg)
+    caps.SetHLG();
+  if (tv && tv->hdr10Plus)
+    caps.SetHDR10Plus();
+  if (tv && tv->dolbyVision)
+    caps.SetDolbyVision();
+  CLog::Log(LOGINFO, "Tizen: the TV shows HDR video:{}{}{}{}{}", caps.SupportsHDR10() ? " HDR10" : "",
+            caps.SupportsHLG() ? " HLG" : "", caps.SupportsHDR10Plus() ? " HDR10+" : "",
+            caps.SupportsDolbyVision() ? " Dolby Vision" : "",
+            tv ? "" : " (no EDID of the TV found)");
+  return caps;
 }
 } // namespace
 
@@ -109,7 +247,7 @@ bool CWinSystemWaylandTizen::InitWindowSystem()
   if (tizen_emss_available())
     CRendererTizen::Register();
 
-  m_hdrDisplay = TvSupportsHdr();
+  m_hdrCaps = TvHdrCapabilities();
 
   if (pipe2(m_lifecyclePipe, O_CLOEXEC) == 0)
   {
@@ -342,17 +480,13 @@ bool CWinSystemWaylandTizen::HasCursor()
 
 bool CWinSystemWaylandTizen::IsHDRDisplay()
 {
-  return m_hdrDisplay;
+  return m_hdrCaps.SupportsHDR10() || m_hdrCaps.SupportsHLG() || m_hdrCaps.SupportsHDR10Plus() ||
+         m_hdrCaps.SupportsDolbyVision();
 }
 
 CHDRCapabilities CWinSystemWaylandTizen::GetDisplayHDRCapabilities() const
 {
-  // The TV only says whether it shows HDR at all, which means HDR10. HLG, HDR10+ and
-  // Dolby Vision vary between models and are not told.
-  CHDRCapabilities caps;
-  if (m_hdrDisplay)
-    caps.SetHDR10();
-  return caps;
+  return m_hdrCaps;
 }
 
 } // namespace KODI::WINDOWING::WAYLAND
