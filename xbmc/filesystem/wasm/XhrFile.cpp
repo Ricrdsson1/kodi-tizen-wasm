@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 
@@ -44,9 +45,12 @@ EM_JS(int, kodi_xhr_request,
   var userAgent = userAgentPtr ? UTF8ToString(userAgentPtr) : "";
   var referer = refererPtr ? UTF8ToString(refererPtr) : "";
 
+  // Browsers quote the URL, credentials included, in their error messages.
+  var redact = function(s) { return String(s).replace(new RegExp("//[^/@ ]*@", "g"), "//"); };
+
   var store = Module.kodiXhrStore = Module.kodiXhrStore || {};
   store.status = 0;
-  store.statusText = "";
+  store.redirected = false;
   store.responseURL = "";
   store.rawHeaders = "";
   store.body = null;
@@ -77,7 +81,8 @@ EM_JS(int, kodi_xhr_request,
     xhr.send(body);
 
     store.status = xhr.status | 0;
-    store.statusText = xhr.statusText || "";
+    var plain = function(u) { u = new URL(u); u.hash = u.username = u.password = ""; return u.href; };
+    store.redirected = !!xhr.responseURL && plain(xhr.responseURL) !== plain(url);
     store.responseURL = xhr.responseURL || url;
     store.rawHeaders = xhr.getAllResponseHeaders() || "";
     var clen = xhr.getResponseHeader("Content-Length");
@@ -88,8 +93,8 @@ EM_JS(int, kodi_xhr_request,
       store.error = "no response (blocked by the browser: CORS, mixed content or network)";
     return store.status;
   } catch (e) {
-    store.error = (e && e.name ? e.name + ": " : "") + (e && e.message ? e.message : String(e));
-    console.warn("[kodi][xhr] request failed:", method, url, e);
+    store.error = redact((e && e.name ? e.name + ": " : "") + (e && e.message ? e.message : String(e)));
+    console.warn("[kodi][xhr] request failed:", method, store.error);
     return 0;
   }
 });
@@ -99,12 +104,21 @@ EM_JS(int, kodi_xhr_body_size, (), {
   return s.body ? (s.body.length | 0) : 0;
 });
 
+// Hands the body over to the heap: the store keeps no copy, so a large response
+// is not held twice until the thread's next request.
 EM_JS(int, kodi_xhr_copy_body, (char* outPtr, int outSize), {
   var s = Module.kodiXhrStore || {};
-  if (!s.body || !outPtr || outSize <= 0) return 0;
-  var n = Math.min(s.body.length, outSize);
-  HEAPU8.set(s.body.subarray(0, n), outPtr);
+  var body = s.body;
+  s.body = null;
+  if (!body || !outPtr || outSize <= 0) return 0;
+  var n = Math.min(body.length, outSize);
+  HEAPU8.set(body.subarray(0, n), outPtr);
   return n | 0;
+});
+
+EM_JS(int, kodi_xhr_redirected, (), {
+  var s = Module.kodiXhrStore || {};
+  return s.redirected ? 1 : 0;
 });
 
 EM_JS(double, kodi_xhr_content_length, (), {
@@ -112,36 +126,20 @@ EM_JS(double, kodi_xhr_content_length, (), {
   return typeof s.contentLength === "number" ? s.contentLength : -1;
 });
 
-// fieldId: 0=rawHeaders 1=responseURL 2=statusText 3=error
-EM_JS(int, kodi_xhr_copy_string, (int fieldId, char* outPtr, int outSize), {
+// fieldId: 0=rawHeaders 1=responseURL 2=error. The caller frees the result.
+EM_JS(char*, kodi_xhr_string, (int fieldId), {
   var s = Module.kodiXhrStore || {};
-  if (!outPtr || outSize <= 0) return 0;
-  var v = "";
-  if      (fieldId === 0) v = s.rawHeaders || "";
-  else if (fieldId === 1) v = s.responseURL || "";
-  else if (fieldId === 2) v = s.statusText || "";
-  else if (fieldId === 3) v = s.error || "";
-  var bytes = lengthBytesUTF8(v) | 0;
-  stringToUTF8(v, outPtr, outSize);
-  return bytes;
-});
-
-EM_JS(int, kodi_xhr_string_size, (int fieldId), {
-  var s = Module.kodiXhrStore || {};
-  var v = fieldId === 0 ? (s.rawHeaders || "")
-        : fieldId === 1 ? (s.responseURL || "")
-        : fieldId === 2 ? (s.statusText || "")
-        : fieldId === 3 ? (s.error || "") : "";
-  return lengthBytesUTF8(v) | 0;
+  var v = fieldId === 0 ? s.rawHeaders : fieldId === 1 ? s.responseURL : s.error;
+  return stringToNewUTF8(v || "");
 });
 // clang-format on
+EM_JS_DEPS(kodi_xhr, "$stringToNewUTF8");
 
 std::string FetchString(int fieldId)
 {
-  int size = kodi_xhr_string_size(fieldId);
-  std::string out(static_cast<size_t>(size + 1), '\0');
-  kodi_xhr_copy_string(fieldId, out.data(), size + 1);
-  out.resize(size);
+  char* value = kodi_xhr_string(fieldId);
+  std::string out(value ? value : "");
+  std::free(value);
   return out;
 }
 
@@ -205,10 +203,11 @@ struct CXhrFile::Response
   std::string error;
   std::string rawHeaders;
   std::string responseUrl;
+  bool redirected{false};
   std::unique_ptr<char[]> body;
   size_t bodySize{0};
-  // Set for a 206 whose Content-Range matches the body: first is the offset of
-  // body[0] in the resource, total the resource length.
+  // Set for a 206 answering a range: first is the offset of body[0] in the
+  // resource, total the resource length, or -1 when Content-Range is hidden.
   bool partial{false};
   int64_t first{0};
   int64_t total{0};
@@ -221,15 +220,18 @@ CXhrFile::~CXhrFile()
   Close();
 }
 
-CXhrFile::Request CXhrFile::BuildRequest() const
+CXhrFile::Request CXhrFile::BuildRequest(const CURL& url) const
 {
   Request request;
-  request.url = m_url;
+  request.url = url.GetWithoutUserDetails();
   for (const auto& [name, value] : m_requestHeaders)
   {
     if (!name.empty())
       request.headers += name + ':' + value + '\n';
   }
+  if (!url.GetUserName().empty() && !HasHeader(m_requestHeaders, "Authorization"))
+    request.headers +=
+        "Authorization:Basic " + Base64::Encode(url.GetUserName() + ':' + url.GetPassWord()) + '\n';
   if (!m_cookie.empty())
     request.headers += "Cookie:" + m_cookie + "\n";
   if (!m_acceptEncoding.empty())
@@ -243,7 +245,7 @@ CXhrFile::Request CXhrFile::BuildRequest() const
 }
 
 // Applies Kodi's protocol options as CCurlFile does and returns the URL without
-// them. Options only libcurl can honour, such as redirect-limit, are dropped.
+// them. Options only libcurl can honour, such as verifypeer, are dropped.
 std::string CXhrFile::ApplyProtocolOptions(const CURL& url)
 {
   CURL target(url);
@@ -253,28 +255,29 @@ std::string CXhrFile::ApplyProtocolOptions(const CURL& url)
   {
     const std::string name = StringUtils::ToLower(option);
     if (name == "referer")
-      SetReferer(value);
+      m_referer = value;
     else if (name == "user-agent")
-      SetUserAgent(value);
+      m_userAgent = value;
     else if (name == "cookie")
-      SetCookie(value);
+      m_cookie = value;
     else if (name == "acceptencoding" || name == "encoding")
-      SetAcceptEncoding(value);
+      m_acceptEncoding = value;
     else if (name == "accept-charset")
-      SetAcceptCharset(value);
+      m_acceptCharset = value;
     else if (name == "customrequest")
-      SetCustomRequest(value);
+      m_customRequest = value;
+    else if (name == "redirect-limit")
+      m_noRedirect = value == "0";
     else if (name == "postdata")
     {
       m_postData = Base64::Decode(value);
       m_postDataSet = true;
     }
     else if (name == "auth" || name == "noshout" || name == "seekable" || name == "sslcipherlist" ||
-             name == "connection-timeout" || name == "failonerror" || name == "redirect-limit" ||
-             name == "verifypeer")
+             name == "connection-timeout" || name == "failonerror" || name == "verifypeer")
       continue;
     else if (!name.empty())
-      SetRequestHeader(name[0] == '!' ? option.substr(1) : option, value);
+      m_requestHeaders[name[0] == '!' ? option.substr(1) : option] = value;
   }
   target.SetProtocolOptions("");
   return target.Get();
@@ -306,15 +309,17 @@ CXhrFile::Response CXhrFile::Fetch(const Request& request,
                        request.userAgent.c_str(), request.referer.c_str(), request.timeout, 1);
   if (out.status <= 0)
   {
-    out.error = FetchString(3);
+    out.error = FetchString(2);
     return out;
   }
 
   out.rawHeaders = FetchString(0);
   out.responseUrl = FetchString(1);
+  out.redirected = kodi_xhr_redirected() != 0;
   const int bodySize = kodi_xhr_body_size();
   if (bodySize > MAX_EAGER_RESPONSE_BYTES)
   {
+    kodi_xhr_copy_body(nullptr, 0); // drops the body
     out.status = 0;
     out.error = StringUtils::Format("refusing to keep a {:.1f} MiB response in the WASM heap",
                                     static_cast<double>(bodySize) / (1024.0 * 1024.0));
@@ -330,9 +335,21 @@ CXhrFile::Response CXhrFile::Fetch(const Request& request,
   {
     CHttpHeader header;
     ParseResponseHeaders(out.rawHeaders, header);
+    const std::string contentRange = header.GetValue("content-range");
     int64_t last = 0;
-    out.partial = ParseContentRange(header.GetValue("content-range"), out.first, last, out.total) &&
-                  last - out.first + 1 == static_cast<int64_t>(out.bodySize);
+    if (!contentRange.empty())
+    {
+      out.partial = ParseContentRange(contentRange, out.first, last, out.total) &&
+                    last - out.first + 1 == static_cast<int64_t>(out.bodySize);
+    }
+    else if (rangeLength > 0)
+    {
+      // A cross-origin server that does not expose Content-Range still answers
+      // the range that was asked for.
+      out.partial = true;
+      out.first = rangeStart;
+      out.total = -1;
+    }
   }
   return out;
 }
@@ -351,7 +368,7 @@ bool CXhrFile::Open(const CURL& url)
   const std::string method =
       !m_customRequest.empty() ? m_customRequest : (m_postDataSet ? "POST" : "GET");
   const std::string& body = m_postDataSet ? m_postData : std::string();
-  Request request = BuildRequest();
+  Request request = BuildRequest(CURL(m_url));
   // libcurl posts a form by default; XHR would send the bytes with no type.
   if (m_postDataSet && !HasHeader(m_requestHeaders, "Content-Type"))
     request.headers += "Content-Type:application/x-www-form-urlencoded\n";
@@ -359,9 +376,19 @@ bool CXhrFile::Open(const CURL& url)
   // Only a plain GET is read in windows; other requests are taken whole.
   const bool windowed = method == "GET" && !HasHeader(m_requestHeaders, "Range");
   Response response = Fetch(request, method, body, 0, windowed ? RANGE_WINDOW_BYTES : 0);
+  // Content-Length, which CORS always exposes, gives the length that a hidden
+  // Content-Range would have.
+  if (windowed && response.partial && response.total < 0)
+  {
+    const int status = Head(CURL(m_url));
+    const double length = kodi_xhr_content_length();
+    if (status > 0 && status < 400 && length >= static_cast<double>(response.bodySize))
+      response.total = static_cast<int64_t>(length);
+  }
   // An empty resource answers a range request with 416.
-  if ((windowed && response.status == 416) ||
-      (response.status == 206 && (!response.partial || response.first != 0)))
+  if (windowed && (response.status == 416 ||
+                   (response.status == 206 &&
+                    (!response.partial || response.first != 0 || response.total < 0))))
     response = Fetch(request, method, body, 0, 0);
   m_httpResponse = response.status;
 
@@ -371,12 +398,19 @@ bool CXhrFile::Open(const CURL& url)
     return false;
   }
 
+  // XHR follows redirects before any header is visible. A caller that asked not
+  // to gets the target as REDIRECT_URL without the target's headers, which it
+  // would take for the redirect's: a repository checksum from the mirror.
+  if (m_noRedirect && response.redirected)
+  {
+    m_redirectUrl = response.responseUrl;
+    response.rawHeaders.clear();
+  }
   ParseResponseHeaders(response.rawHeaders, m_httpHeader);
-  if (!response.responseUrl.empty())
-    m_url = response.responseUrl;
+  m_effectiveUrl = response.responseUrl.empty() ? m_url : response.responseUrl;
 
-  m_rangeSupported = response.partial;
-  m_fileSize = response.partial ? response.total : static_cast<int64_t>(response.bodySize);
+  m_rangeSupported = windowed && response.partial;
+  m_fileSize = m_rangeSupported ? response.total : static_cast<int64_t>(response.bodySize);
   m_filePos = 0;
   m_windowStart = 0;
   m_windowSize = response.bodySize;
@@ -399,9 +433,9 @@ int CXhrFile::Head(const CURL& url)
   if (!IsHttp(url))
     return 0;
   const std::string target = ApplyProtocolOptions(url);
-  const Request request = BuildRequest();
+  const Request request = BuildRequest(CURL(target));
   const int status =
-      kodi_xhr_request("HEAD", target.c_str(), nullptr, 0,
+      kodi_xhr_request("HEAD", request.url.c_str(), nullptr, 0,
                        request.headers.empty() ? nullptr : request.headers.c_str(),
                        request.userAgent.c_str(), request.referer.c_str(), request.timeout, 0);
   if (status > 0 && status < 400)
@@ -474,7 +508,7 @@ bool CXhrFile::FillWindow(int64_t position, size_t want)
     return false;
 
   const int64_t length = std::max<int64_t>(static_cast<int64_t>(want), RANGE_WINDOW_BYTES);
-  Response response = Fetch(BuildRequest(), "GET", {}, position, length);
+  Response response = Fetch(BuildRequest(CURL(m_url)), "GET", {}, position, length);
   const bool usable =
       response.status == 206 ? response.partial : response.status > 0 && response.status < 400;
   const int64_t first = response.partial ? response.first : 0;
@@ -485,14 +519,14 @@ bool CXhrFile::FillWindow(int64_t position, size_t want)
     return false;
   }
 
-  if (response.partial)
-  {
-    m_fileSize = response.total;
-  }
-  else
+  if (!response.partial)
   {
     m_fileSize = static_cast<int64_t>(response.bodySize);
     m_rangeSupported = false;
+  }
+  else if (response.total >= 0)
+  {
+    m_fileSize = response.total;
   }
   m_window = std::move(response.body);
   m_windowSize = response.bodySize;
@@ -600,6 +634,8 @@ void CXhrFile::Close()
   m_opened = false;
   m_httpResponse = -1;
   m_url.clear();
+  m_effectiveUrl.clear();
+  m_redirectUrl.clear();
 }
 
 const std::string CXhrFile::GetProperty(XFILE::FileProperty type, const std::string& name) const
@@ -617,7 +653,9 @@ const std::string CXhrFile::GetProperty(XFILE::FileProperty type, const std::str
     case FileProperty::MIME_TYPE:
       return m_httpHeader.GetMimeType();
     case FileProperty::EFFECTIVE_URL:
-      return m_url;
+      return m_effectiveUrl;
+    case FileProperty::REDIRECT_URL:
+      return m_redirectUrl;
     default:
       return {};
   }
@@ -682,20 +720,9 @@ bool CXhrFile::ReadData(std::string& body)
 
 bool CXhrFile::IsInternet()
 {
-  std::string body;
-  if (Get("https://www.msftconnecttest.com/connecttest.txt", body))
-    return true;
-  return Get("https://www.w3.org/", body);
-}
-
-void CXhrFile::SetRequestHeader(const std::string& header, const std::string& value)
-{
-  m_requestHeaders[header] = value;
-}
-
-void CXhrFile::SetRequestHeader(const std::string& header, long value)
-{
-  m_requestHeaders[header] = std::to_string(value);
+  Close();
+  return Exists(CURL("https://www.msftconnecttest.com/connecttest.txt")) ||
+         Exists(CURL("https://www.w3.org/"));
 }
 
 // The url is driven directly rather than through CFile, so stored credentials
@@ -706,7 +733,7 @@ bool CXhrFile::GetHttpHeader(const CURL& url, CHttpHeader& headers)
   CXhrFile probe;
   if (probe.Stat(URIUtils::AddCredentials(url), nullptr) != 0)
     return false;
-  headers = probe.GetHttpHeader();
+  headers = probe.m_httpHeader;
   return true;
 }
 
@@ -720,7 +747,7 @@ bool CXhrFile::GetMimeType(const CURL& url, std::string& content, const std::str
     content.clear();
     return false;
   }
-  content = buffer.st_mode == _S_IFDIR ? "x-directory/normal" : probe.GetHttpHeader().GetMimeType();
+  content = buffer.st_mode == _S_IFDIR ? "x-directory/normal" : probe.m_httpHeader.GetMimeType();
   return true;
 }
 
@@ -735,6 +762,6 @@ bool CXhrFile::GetContentType(const CURL& url, std::string& content, const std::
     return false;
   }
   content = buffer.st_mode == _S_IFDIR ? "x-directory/normal"
-                                       : probe.GetHttpHeader().GetValue("content-type");
+                                       : probe.m_httpHeader.GetValue("content-type");
   return true;
 }

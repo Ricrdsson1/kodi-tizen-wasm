@@ -20,6 +20,7 @@ set(SOURCES ActorProtocol.cpp
             DatabaseUtils.cpp
             Digest.cpp
             DiscsUtils.cpp
+            DolbyVisionRpu.cpp
             EndianSwap.cpp
             EmbeddedArt.cpp
             EpisodeUtils.cpp
@@ -72,6 +73,7 @@ set(SOURCES ActorProtocol.cpp
             Temperature.cpp
             TextSearch.cpp
             TimeUtils.cpp
+            URIParser.cpp
             URIUtils.cpp
             UrlOptions.cpp
             Utf8Utils.cpp
@@ -109,6 +111,7 @@ set(HEADERS ActorProtocol.h
             DefaultArt.h
             Digest.h
             DiscsUtils.h
+            DolbyVisionRpu.h
             EndianSwap.h
             EpisodeUtils.h
             EventStream.h
@@ -187,6 +190,7 @@ set(HEADERS ActorProtocol.h
             TimeFormat.h
             TimeUtils.h
             TransformMatrix.h
+            URIParser.h
             URIUtils.h
             UrlOptions.h
             Utf8Utils.h
@@ -209,15 +213,12 @@ if(TARGET ${APP_NAME_LC}::EGL)
                       EGLFence.h)
 endif()
 
-# The large map trips the clang optimizer
-if(CMAKE_CXX_COMPILER_ID STREQUAL Clang)
-  set_source_files_properties(Mime.cpp PROPERTIES COMPILE_FLAGS -O0)
-endif()
-
 if(TARGET ${APP_NAME_LC}::OpenGl OR TARGET ${APP_NAME_LC}::OpenGLES)
-  list(APPEND SOURCES GLBufferObject.cpp
+  list(APPEND SOURCES GLBufferArena.cpp
+                      GLBufferObject.cpp
                       GLUtils.cpp)
-  list(APPEND HEADERS GLBufferObject.h
+  list(APPEND HEADERS GLBufferArena.h
+                      GLBufferObject.h
                       GLUtils.h)
 endif()
 

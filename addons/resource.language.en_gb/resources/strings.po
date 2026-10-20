@@ -7500,8 +7500,8 @@ msgctxt "#13423"
 msgid "Remember for this path"
 msgstr ""
 
-#. Shown on context menu when a bluray:// or dvd:// playlist has already been saved
-#. Giving the user a chance to select a new one via the simple menu dialog
+#. Shown on context menu for a Blu-ray disc image, BDMV folder or an already saved bluray://
+#. playlist. Giving the user a chance to select a playlist via the simple menu dialog
 #: xbmc/video/windows/GUIWindowVideoBase.cpp
 msgctxt "#13424"
 msgid "Choose playlist"
@@ -7830,7 +7830,28 @@ msgctxt "#13483"
 msgid "8 bit"
 msgstr ""
 
-#empty strings from id 13484 to 13504
+#. Shown on context menu for a Blu-ray disc image, BDMV folder or an already saved bluray://
+#. playlist, when further choices (see #13485 and #13486) will be offered
+#: xbmc/video/windows/GUIWindowVideoBase.cpp
+msgctxt "#13484"
+msgid "Choose playlist ..."
+msgstr ""
+
+#. Shown on the "Choose playlist ..." context menu of a library item, to assign the chosen
+#. Blu-ray playlist to it
+#: xbmc/video/windows/GUIWindowVideoBase.cpp
+msgctxt "#13485"
+msgid "and Save"
+msgstr ""
+
+#. Shown on the "Choose playlist ..." context menu of a library item, to assign the chosen
+#. Blu-ray playlist to it and play it
+#: xbmc/video/windows/GUIWindowVideoBase.cpp
+msgctxt "#13486"
+msgid "and Play"
+msgstr ""
+
+#empty strings from id 13487 to 13504
 
 #: system/settings/settings.xml
 msgctxt "#13505"
@@ -19120,17 +19141,7 @@ msgctxt "#35216"
 msgid "Support add-ons"
 msgstr ""
 
-#. Dialog text asking user to overwrite their savestate file
-#: xbmc/cores/RetroPlayer/RetroPlayer.cpp"
-msgctxt "#35217"
-msgid "The savestate can only be loaded with \"{0:s}\". Erase savestate and continue?"
-msgstr ""
-
-#. Button to erase the savestate
-#: xbmc/cores/RetroPlayer/RetroPlayer.cpp"
-msgctxt "#35218"
-msgid "Erase savestate"
-msgstr ""
+#empty strings from id 35217 to 35218
 
 #. Error dialog text when trying to play a game and the game's files aren't found.
 #: xbmc/games/GameClient.cpp
@@ -25199,7 +25210,19 @@ msgctxt "#39217"
 msgid "Best"
 msgstr ""
 
-#empty strings from id 39218 to 39899
+#. Title of the setting that chooses if the Dolby Vision extensions is used
+#: system/settings/settings.xml
+msgctxt "#39218"
+msgid "Use Dolby Vision extensions"
+msgstr ""
+
+#. Help text for setting "Dolby Vision extensions" of label #39218
+#: system/settings/settings.xml
+msgctxt "#39219"
+msgid "Use the system Dolby Vision extensions to correctly display Dolby Vision profile 5, 7 (excludes FEL reconstruction), 8 and 10 video."
+msgstr ""
+
+#empty strings from id 39220 to 39899
 
 #. List formatting: pattern used to join a list of exactly two items, e.g. "A and B"
 #. STR_LIST_AND_TWO

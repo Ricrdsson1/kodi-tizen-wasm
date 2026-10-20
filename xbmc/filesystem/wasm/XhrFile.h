@@ -25,8 +25,7 @@ namespace XFILE
  * connect. Requests are synchronous XHRs issued from the calling pthread; the
  * browser handles TLS, CORS (with the dev proxy in tools/wasm/dev_proxy_pre.js),
  * redirects and cookies. GET bodies are read through ranged windows so seeking in a
- * large file does not download all of it; a cross-origin server has to expose
- * Content-Range (Access-Control-Expose-Headers), or the whole body is fetched.
+ * large file does not download all of it.
  */
 class CXhrFile : public IFile
 {
@@ -55,7 +54,6 @@ public:
 
   bool Get(const std::string& url, std::string& body);
   bool Post(const std::string& url, const std::string& postData, std::string& body);
-  bool ReadData(std::string& body);
   bool IsInternet();
   // A synchronous XHR cannot be aborted from another thread; Cancel() fails the
   // requests that follow.
@@ -64,18 +62,7 @@ public:
 
   void SetUserAgent(const std::string& userAgent) { m_userAgent = userAgent; }
   void SetReferer(const std::string& referer) { m_referer = referer; }
-  void SetCookie(const std::string& cookie) { m_cookie = cookie; }
-  void SetCustomRequest(const std::string& request) { m_customRequest = request; }
-  void SetAcceptEncoding(const std::string& encoding) { m_acceptEncoding = encoding; }
-  void SetAcceptCharset(const std::string& charset) { m_acceptCharset = charset; }
   void SetTimeout(int connectTimeoutSeconds) { m_timeout = connectTimeoutSeconds; }
-  void SetMimeType(const std::string& mimeType) { SetRequestHeader("Content-Type", mimeType); }
-  void SetRequestHeader(const std::string& header, const std::string& value);
-  void SetRequestHeader(const std::string& header, long value);
-  void ClearRequestHeaders() { m_requestHeaders.clear(); }
-
-  const CHttpHeader& GetHttpHeader() const { return m_httpHeader; }
-  const std::string& GetURL() const { return m_url; }
 
   static bool GetHttpHeader(const CURL& url, CHttpHeader& headers);
   static bool GetMimeType(const CURL& url, std::string& content, const std::string& useragent = "");
@@ -88,7 +75,8 @@ private:
   struct Response;
 
   std::string ApplyProtocolOptions(const CURL& url);
-  Request BuildRequest() const;
+  bool ReadData(std::string& body);
+  Request BuildRequest(const CURL& url) const;
   Response Fetch(const Request& request,
                  const std::string& method,
                  const std::string& body,
@@ -98,12 +86,15 @@ private:
   bool FillWindow(int64_t position, size_t want);
   void DropWindow();
 
+  // Reuse the original URL so the browser applies redirect credential rules to every range.
   std::string m_url;
+  std::string m_effectiveUrl;
   std::map<std::string, std::string> m_requestHeaders;
   std::string m_userAgent;
   std::string m_referer;
   std::string m_cookie;
   std::string m_customRequest;
+  bool m_noRedirect{false};
   std::string m_acceptEncoding;
   std::string m_acceptCharset;
   std::string m_postData;
@@ -114,6 +105,7 @@ private:
   bool m_opened{false};
   int m_httpResponse{-1};
   CHttpHeader m_httpHeader;
+  std::string m_redirectUrl;
 
   // The window is the part of the body currently held in memory: bytes
   // [m_windowStart, m_windowStart + m_windowSize) of the resource.

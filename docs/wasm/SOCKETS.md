@@ -58,14 +58,13 @@ One binary serves both environments and picks the HTTP backend at runtime:
 | | Tizen (sockets) | Other browsers |
 |---|---|---|
 | `http`, `https` | `CCurlFile` (libcurl) | `CXhrFile` (XMLHttpRequest, `xbmc/filesystem/wasm/`) |
-| `ftp`, `ftps`, `dav`, `davs`, `rss`, `shout` | libcurl classes | not offered |
 | Scrapers, `CreateHttpClient()` | `CCurlHttpClient` | `CXhrHttpClient` |
 | `CCurlFile::GetMimeType` and friends | libcurl | forwarded to `CXhrFile` |
 
-FileFactory and DirectoryFactory make the choice, so code that goes through
-`CFile` needs no changes; code that uses `CCurlFile` directly still needs
-sockets. The dev proxy (`ENABLE_WASM_DEV_PROXY`) rewrites XHRs only and does
-not apply to libcurl traffic.
+FileFactory makes the choice, so code that goes through `CFile` needs no
+changes; code that uses `CCurlFile` directly, and the other libcurl protocols,
+still need sockets. The dev proxy (`ENABLE_WASM_DEV_PROXY`) rewrites XHRs only
+and does not apply to libcurl traffic.
 
 ## Limits
 
@@ -75,6 +74,5 @@ not apply to libcurl traffic.
   ENOPROTOOPT.
 - `SocketsHostBindings` on the main thread is not used, so nothing socket
   related may run on the browser main thread.
-- Without sockets, `CXhrFile` reads a file in ranged windows only when the
-  server exposes `Content-Range` to the page: a cross-origin server has to list
-  it in `Access-Control-Expose-Headers`, or the whole body is fetched.
+- `getaddrinfo` returns one node per address. Emscripten up to 6.0.9 frees
+  only the first node in `freeaddrinfo`, so use 6.0.10 or later.

@@ -5,7 +5,8 @@ DEPS = ../../Makefile.include MARIADB-VERSION Makefile ../../download-files.incl
                                   03-win-uwp.patch \
                                   04-win-installpkgconfig.patch \
                                   05-all-installtargets.patch \
-                                  06-emscripten-no-shared.patch
+                                  06-emscripten-no-shared.patch \
+                                  07-all-pc-static-zstd.patch
 
 LIBDYLIB=$(PLATFORM)/build/lib$(LIBNAME)/lib$(LIBNAME)client.a
 
@@ -13,7 +14,7 @@ LIBDYLIB=$(PLATFORM)/build/lib$(LIBNAME)/lib$(LIBNAME)client.a
 PLUGIN_BUILD_FLAGS=-DCLIENT_PLUGIN_DIALOG=STATIC
 PLUGIN_BUILD_FLAGS+=-DCLIENT_PLUGIN_SHA256_PASSWORD=STATIC -DCLIENT_PLUGIN_CACHING_SHA2_PASSWORD=STATIC
 PLUGIN_BUILD_FLAGS+=-DCLIENT_PLUGIN_MYSQL_CLEAR_PASSWORD=STATIC -DCLIENT_PLUGIN_MYSQL_OLD_PASSWORD=STATIC
-PLUGIN_BUILD_FLAGS+=-DCLIENT_PLUGIN_CLIENT_ED25519=STATIC
+PLUGIN_BUILD_FLAGS+=-DCLIENT_PLUGIN_CLIENT_ED25519=STATIC -DCLIENT_PLUGIN_ZSTD=STATIC
 
 # tvos: warning: setcontext is not implemented and will always fail
 ifeq ($(findstring appletv,$(TARGET_PLATFORM)),appletv)
@@ -33,6 +34,7 @@ CMAKE_OPTIONS=-DWITH_SSL=OPENSSL \
               -DWITH_UNIT_TESTS:BOOL=OFF \
               -DWITH_EXTERNAL_ZLIB:BOOL=ON \
               -DWITH_CURL:BOOL=OFF \
+              -DZSTD_ROOT_DIR=$(PREFIX) \
               -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF \
               -DINSTALL_STATIC=ON
 
@@ -55,6 +57,7 @@ ifeq ($(OS),wasm)
 	cd $(PLATFORM); patch -p1 -i ../06-emscripten-no-shared.patch
 endif
 	cd $(PLATFORM); patch -p1 -i ../05-all-installtargets.patch
+	cd $(PLATFORM); patch -p1 -i ../07-all-pc-static-zstd.patch
 	cd $(PLATFORM)/build; $(CMAKE) $(PLUGIN_BUILD_FLAGS) $(CMAKE_OPTIONS) ..
 	touch $@
 

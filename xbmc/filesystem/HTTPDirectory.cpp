@@ -33,10 +33,11 @@ CHTTPDirectory::~CHTTPDirectory(void) = default;
 bool CHTTPDirectory::GetDirectory(const CURL& url, CFileItemList &items)
 {
   CFile http;
+  std::vector<uint8_t> data;
 
   const std::string& strBasePath = url.GetFileName();
 
-  if(!http.Open(url))
+  if (http.LoadFile(url, data) < 0)
   {
     CLog::Log(LOGERROR, "{} - Unable to get http directory ({})", __FUNCTION__, url.GetRedacted());
     return false;
@@ -74,11 +75,7 @@ bool CHTTPDirectory::GetDirectory(const CURL& url, CFileItemList &items)
   reSize.RegComp(" +([0-9]+)(B|K|M|G)?(?=\\s|<|$)");
 
   /* read response from server into string buffer */
-  std::string strBuffer;
-  char buffer[16384];
-  ssize_t read;
-  while ((read = http.Read(buffer, sizeof(buffer))) > 0)
-    strBuffer.append(buffer, read);
+  std::string strBuffer(data.begin(), data.end());
   if (!strBuffer.empty())
   {
     /* if Content-Length is found and its not text/html, URL is pointing to file so don't treat URL as HTTPDirectory */

@@ -3,6 +3,9 @@
  *  SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+// clang-format splits the {{{ }}} macros of the Emscripten JS library.
+// clang-format off
+
 // BSD sockets for Emscripten on Samsung Tizen TVs.
 //
 // The Tizen web runtime exposes TCP/UDP sockets and synchronous DNS to
@@ -64,8 +67,8 @@ addToLibrary({
     'kodi_sock_table', 'kodi_sock_max_fd', 'kodi_sock_errno_from_linux',
     '_kodi_sock_fd_reserve', '_kodi_sock_fd_release',
     'kodi_upstream_poll_nonblocking',
-    'malloc', 'free',
-    '$inetPton4', '$inetPton6', '$UTF8ToString', '$stringToNewUTF8',
+    'malloc', 'free', 'freeaddrinfo',
+    '$inetPton4', '$inetPton6', '$UTF8ToString',
   ],
   $TizenSockets: {
     ENTRY_SIZE: 16,
@@ -321,7 +324,7 @@ addToLibrary({
       if (TizenSockets.flags(fd) & TizenSockets.FLAG_NONBLOCK) return -{{{ cDefs.EINPROGRESS }}};
       const r = TizenSockets.waitWritable(fd, nativeId);
       if (r < 0) return r;
-      if (r === 0) return -_kodi_sock_errno_from_linux(110 /* ETIMEDOUT */);
+      if (r === 0) return -{{{ cDefs.ETIMEDOUT }}};
       try {
         const err = tizentvwasm.SocketsManager.getSockOpt(nativeId, 'sol_socket', 'so_error');
         return err ? -_kodi_sock_errno_from_linux(err) : 0;
@@ -982,12 +985,13 @@ addToLibrary({
 
     let port = 0;
     if (service) {
-      port = parseInt(UTF8ToString(service), 10);
-      if (isNaN(port)) return (flags & {{{ cDefs.AI_NUMERICSERV }}}) ? {{{ cDefs.EAI_NONAME }}} : {{{ cDefs.EAI_SERVICE }}};
+      const text = UTF8ToString(service);
+      if (!/^\d+$/.test(text)) return (flags & {{{ cDefs.AI_NUMERICSERV }}}) ? {{{ cDefs.EAI_NONAME }}} : {{{ cDefs.EAI_SERVICE }}};
+      port = parseInt(text, 10);
+      if (port > 65535) return {{{ cDefs.EAI_SERVICE }}};
     }
 
     const addrs = [];
-    let canonical = null;
     if (!node) {
       const af = family === {{{ cDefs.AF_UNSPEC }}} ? {{{ cDefs.AF_INET }}} : family;
       const bytes = new Uint8Array(af === {{{ cDefs.AF_INET6 }}} ? 16 : 4);
@@ -1013,7 +1017,6 @@ addToLibrary({
         } catch (e) {
           return -4; /* EAI_FAIL */
         }
-        canonical = host.name || name;
         for (const a of Array.from(host.getAddrList())) {
           const af = a.family === 'af_inet6' ? {{{ cDefs.AF_INET6 }}} : {{{ cDefs.AF_INET }}};
           if (family === {{{ cDefs.AF_UNSPEC }}} || family === af) {
@@ -1032,6 +1035,7 @@ addToLibrary({
       const ai = _malloc({{{ C_STRUCTS.addrinfo.__size__ }}});
       if (!sa || !ai) {
         _free(sa); _free(ai);
+        _freeaddrinfo(head);
         return -10; /* EAI_MEMORY */
       }
       HEAPU8.fill(0, sa, sa + salen);
@@ -1047,9 +1051,8 @@ addToLibrary({
       {{{ makeSetValue('ai', C_STRUCTS.addrinfo.ai_protocol, 'proto', 'i32') }}};
       {{{ makeSetValue('ai', C_STRUCTS.addrinfo.ai_addrlen, 'salen', 'i32') }}};
       {{{ makeSetValue('ai', C_STRUCTS.addrinfo.ai_addr, 'sa', '*') }}};
-      if (!head && canonical && (flags & {{{ cDefs.AI_CANONNAME }}})) {
-        {{{ makeSetValue('ai', C_STRUCTS.addrinfo.ai_canonname, 'stringToNewUTF8(canonical)', '*') }}};
-      }
+      // ai_canonname stays NULL, as with Emscripten's own getaddrinfo():
+      // its freeaddrinfo() would not free it.
       if (prev) {
         {{{ makeSetValue('prev', C_STRUCTS.addrinfo.ai_next, 'ai', '*') }}};
       } else {

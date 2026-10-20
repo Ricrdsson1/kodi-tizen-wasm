@@ -11,10 +11,8 @@
 #include <errno.h>
 #include <stdatomic.h>
 #include <stdint.h>
-#include <stdlib.h>
 
 #include <emscripten.h>
-#include <netdb.h>
 
 /* Per-fd state shared by every pthread. The JS side (tizen_sockets.js) reads
  * and writes it with Atomics through the address returned below. Entries are
@@ -160,20 +158,4 @@ int kodi_wasm_has_sockets(void)
     atomic_store(&g_availability, state);
   }
   return state == 1;
-}
-
-/* Replaces libc's: up to 6.0.9, Emscripten's freeaddrinfo() frees only the
- * first node and never ai_canonname, while getaddrinfo() in tizen_sockets.js
- * returns one node per address with a malloc'd canonical name. Emscripten's own
- * getaddrinfo() returns a single node, which this frees the same way. */
-void freeaddrinfo(struct addrinfo* ai)
-{
-  while (ai)
-  {
-    struct addrinfo* next = ai->ai_next;
-    free(ai->ai_canonname);
-    free(ai->ai_addr);
-    free(ai);
-    ai = next;
-  }
 }

@@ -79,6 +79,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     "SHELL:--js-library ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/network/tizen_sockets.js"
   )
 
+  # tizen_sockets.js returns one getaddrinfo() node per address, and older
+  # Emscripten freeaddrinfo() frees only the first one.
+  if(EMSCRIPTEN_VERSION AND EMSCRIPTEN_VERSION VERSION_LESS 6.0.10)
+    message(WARNING "Emscripten ${EMSCRIPTEN_VERSION} leaks getaddrinfo() results on Tizen; use 6.0.10 or later")
+  endif()
+
   # ---------------------------------------------------------------------------
   # Debug vs Release
   #
