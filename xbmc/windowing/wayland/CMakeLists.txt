@@ -86,10 +86,12 @@ if(TARGET_TIZEN)
                               ${WAYLAND_EXTRA_PROTOCOL_GENERATED_DIR}/wayland-tizen-protocols.hpp
                               PROPERTIES GENERATED TRUE SKIP_LINTING ON)
 
-  list(APPEND SOURCES SeatTizen.cpp
+  list(APPEND SOURCES OSScreenSaverTizen.cpp
+                      SeatTizen.cpp
                       WinSystemWaylandTizen.cpp
                       ${WAYLAND_EXTRA_PROTOCOL_GENERATED_DIR}/wayland-tizen-protocols.cpp)
-  list(APPEND HEADERS SeatTizen.h
+  list(APPEND HEADERS OSScreenSaverTizen.h
+                      SeatTizen.h
                       WinSystemWaylandTizen.h
                       ${WAYLAND_EXTRA_PROTOCOL_GENERATED_DIR}/wayland-tizen-protocols.hpp)
 endif()

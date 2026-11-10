@@ -41,6 +41,7 @@ public:
   bool HasCursor() override;
   bool IsHDRDisplay() override;
   CHDRCapabilities GetDisplayHDRCapabilities() const override;
+  std::unique_ptr<KODI::WINDOWING::IOSScreenSaver> GetOSScreenSaverImpl() override;
 
   /*!
    * \brief The id by which the TV's players show video on Kodi's window, 0 until the

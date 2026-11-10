@@ -9,6 +9,7 @@
 #include "WinSystemWaylandTizen.h"
 
 #include "Connection.h"
+#include "OSScreenSaverTizen.h"
 #include "Registry.h"
 #include "SeatTizen.h"
 #include "ServiceBroker.h"
@@ -487,6 +488,13 @@ bool CWinSystemWaylandTizen::IsHDRDisplay()
 CHDRCapabilities CWinSystemWaylandTizen::GetDisplayHDRCapabilities() const
 {
   return m_hdrCaps;
+}
+
+std::unique_ptr<KODI::WINDOWING::IOSScreenSaver> CWinSystemWaylandTizen::GetOSScreenSaverImpl()
+{
+  if (auto screenSaver = COSScreenSaverTizen::TryCreate())
+    return screenSaver;
+  return CWinSystemWayland::GetOSScreenSaverImpl();
 }
 
 } // namespace KODI::WINDOWING::WAYLAND
