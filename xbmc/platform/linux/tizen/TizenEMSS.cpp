@@ -303,6 +303,7 @@ private:
   static void OnError(int error, void* self);
   static void OnEos(void* self);
 
+  std::unique_lock<std::recursive_mutex> LockForCallback();
   void SetTrackOpen(int type, bool open);
   void StartIfWanted();
   void WatchTime();
@@ -311,6 +312,8 @@ private:
   void* m_player{nullptr};
   TizenEmssState* m_state{nullptr};
   std::recursive_mutex m_lock;
+  //! Set while the player is destroyed, which waits for its callbacks under m_lock
+  std::atomic<bool> m_destroying{false};
   bool m_hasAudio{false};
   //! Given with every video packet, which is how the TV learns of HDR in a stream
   TizenEmssVideoColor m_videoColor{};
@@ -501,9 +504,11 @@ void CEsPlayer::DestroyPlayer()
     return;
   // No packet is being given to it now (see Append()).
   std::unique_lock use(m_playerUse);
+  m_destroying = true;
   const int stopped = m_api->stop(m_player);
   const int closed = m_api->close(m_player);
   const int destroyed = m_api->destroy(m_player);
+  m_destroying = false;
   CLog::LogF(LOGINFO, "ESPlayer: closed ({:#x} {:#x} {:#x})", static_cast<unsigned>(stopped),
              static_cast<unsigned>(closed), static_cast<unsigned>(destroyed));
   m_player = nullptr;
@@ -542,18 +547,35 @@ void CEsPlayer::SetTrackOpen(int type, bool open)
     m_state->sourceState = TIZEN_EMSS_OPEN;
 }
 
+std::unique_lock<std::recursive_mutex> CEsPlayer::LockForCallback()
+{
+  // A callback of a player that is being destroyed has nothing left to do.
+  std::unique_lock lock(m_lock, std::defer_lock);
+  while (!lock.try_lock())
+  {
+    if (m_destroying)
+      return lock;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return lock;
+}
+
 void CEsPlayer::OnReadyToPrepare(int type, void* self)
 {
   auto* player = static_cast<CEsPlayer*>(self);
   CLog::Log(LOGDEBUG, "ESPlayer: {} track ready to prepare", type == STREAM_VIDEO ? "video" : "audio");
-  std::unique_lock lock(player->m_lock);
+  const auto lock = player->LockForCallback();
+  if (!lock.owns_lock())
+    return;
   player->SetTrackOpen(type, true);
 }
 
 void CEsPlayer::OnPrepared(bool result, void* self)
 {
   auto* player = static_cast<CEsPlayer*>(self);
-  std::unique_lock lock(player->m_lock);
+  const auto lock = player->LockForCallback();
+  if (!lock.owns_lock())
+    return;
   if (!result)
   {
     CLog::Log(LOGERROR, "ESPlayer: prepare failed");
@@ -569,7 +591,9 @@ void CEsPlayer::OnPrepared(bool result, void* self)
 void CEsPlayer::OnReadyToSeek(int type, uint64_t offset, void* self)
 {
   auto* player = static_cast<CEsPlayer*>(self);
-  std::unique_lock lock(player->m_lock);
+  const auto lock = player->LockForCallback();
+  if (!lock.owns_lock())
+    return;
   // A track answering an earlier seek would take the packets from after the latest.
   if (offset != player->m_seekTarget &&
       std::ranges::find(player->m_earlierSeekTargets, offset) !=
@@ -587,7 +611,9 @@ void CEsPlayer::OnReadyToSeek(int type, uint64_t offset, void* self)
 void CEsPlayer::OnSeekDone(void* self)
 {
   auto* player = static_cast<CEsPlayer*>(self);
-  std::unique_lock lock(player->m_lock);
+  const auto lock = player->LockForCallback();
+  if (!lock.owns_lock())
+    return;
   CLog::Log(LOGDEBUG, "ESPlayer: seek done");
   player->m_seeking = false;
   player->m_earlierSeekTargets.clear();
@@ -597,7 +623,9 @@ void CEsPlayer::OnError(int error, void* self)
 {
   auto* player = static_cast<CEsPlayer*>(self);
   CLog::Log(LOGERROR, "ESPlayer: error {:#x}", static_cast<unsigned>(error));
-  std::unique_lock lock(player->m_lock);
+  const auto lock = player->LockForCallback();
+  if (!lock.owns_lock())
+    return;
   if (player->m_state)
     player->m_state->error = 1;
 }
@@ -605,7 +633,9 @@ void CEsPlayer::OnError(int error, void* self)
 void CEsPlayer::OnEos(void* self)
 {
   auto* player = static_cast<CEsPlayer*>(self);
-  std::unique_lock lock(player->m_lock);
+  const auto lock = player->LockForCallback();
+  if (!lock.owns_lock())
+    return;
   if (player->m_state)
   {
     player->m_state->ended = 1;
