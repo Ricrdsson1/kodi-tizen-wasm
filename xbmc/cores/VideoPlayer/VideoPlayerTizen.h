@@ -32,4 +32,5 @@ protected:
 
 private:
   std::unique_ptr<CMediaPipelineTizen> m_mediaPipelineTizen;
+  std::weak_ptr<CDVDInputStream> m_pipelineInput; //!< the input the pipeline plays
 };

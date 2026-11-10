@@ -51,6 +51,12 @@ void CVideoPlayerTizen::CreatePlayers()
       m_VideoPlayerVideo->EnableSubtitle(subtitlesEnabled);
       m_VideoPlayerVideo->SetSubtitleDelay(subtitleDelay);
     }
+    else if (m_pipelineInput.lock() != m_pInputStream)
+    {
+      // A file opened in place
+      m_mediaPipelineTizen->Reset(hasAudio);
+    }
+    m_pipelineInput = m_pInputStream;
   }
   else if (m_mediaPipelineTizen || (!m_VideoPlayerVideo && !m_VideoPlayerAudio))
   {

@@ -65,6 +65,13 @@ public:
 
   void FlushVideoMessages();
   void FlushAudioMessages();
+
+  /*!
+   * \brief Forget the streams of the previous file. VideoPlayer opens a file in place
+   * without closing the streams of the one before.
+   */
+  void Reset(bool hasAudio);
+
   bool OpenAudioStream(CDVDStreamInfo hint);
   bool OpenVideoStream(CDVDStreamInfo hint);
   void CloseAudioStream(bool waitForBuffers);

@@ -330,6 +330,15 @@ void CMediaPipelineTizen::FlushAudioMessages()
   m_messageQueueAudio.Flush();
 }
 
+void CMediaPipelineTizen::Reset(const bool hasAudio)
+{
+  Unload();
+  Flush(false);
+  m_audioHint = CDVDStreamInfo();
+  m_videoHint = CDVDStreamInfo();
+  m_hasAudio = hasAudio;
+}
+
 bool CMediaPipelineTizen::OpenAudioStream(CDVDStreamInfo hint)
 {
   const bool changed = m_audioHint != hint;
