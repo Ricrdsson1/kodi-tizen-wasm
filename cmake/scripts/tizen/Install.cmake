@@ -67,7 +67,7 @@ set(APP_TPK ${CMAKE_BINARY_DIR}/${APP_NAME_LC}-${APP_VERSION_MAJOR}.${APP_VERSIO
 add_custom_target(tpk
   DEPENDS bundle
   COMMAND ${DOTNET_EXECUTABLE} build -c Release -nologo -v q
-  COMMAND ${CMAKE_COMMAND} -DPATTERN=${APP_PACKAGE_DIR}/bin/Release/tizen80/*.tpk -DTARGET=${APP_TPK}
+  COMMAND ${CMAKE_COMMAND} -DPATTERN=${APP_PACKAGE_DIR}/bin/Release/tizen40/*.tpk -DTARGET=${APP_TPK}
                            -P ${CMAKE_SOURCE_DIR}/cmake/scripts/tizen/CopyTpk.cmake
   COMMAND ${TIZEN_CLI} package -t tpk ${TIZEN_SIGN_ARGS} -- ${APP_TPK}
   WORKING_DIRECTORY ${APP_PACKAGE_DIR}

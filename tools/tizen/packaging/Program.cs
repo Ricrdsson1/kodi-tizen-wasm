@@ -31,6 +31,28 @@ class KodiHost : CoreUIApplication
     long[] logSent;
     readonly object logLock = new object();
 
+    // ProcessStartInfo.Arguments is split like a Windows command line, also on Linux. The
+    // .NET of older TVs has no ArgumentList.
+    static string QuoteArgument(string arg)
+    {
+        var quoted = new StringBuilder("\"");
+        int backslashes = 0;
+        foreach (char c in arg)
+        {
+            if (c == '\\')
+            {
+                ++backslashes;
+                continue;
+            }
+            // Backslashes are literal unless they precede a quote
+            quoted.Append('\\', c == '"' ? backslashes * 2 + 1 : backslashes);
+            backslashes = 0;
+            quoted.Append(c);
+        }
+        quoted.Append('\\', backslashes * 2);
+        return quoted.Append('"').ToString();
+    }
+
     void SendLogs()
     {
         lock (logLock)
@@ -175,11 +197,13 @@ class KodiHost : CoreUIApplication
         string argsFile = Path.Combine(app, "res", "kodi-args");
         if (File.Exists(argsFile))
         {
+            var args = new StringBuilder();
             foreach (string arg in File.ReadAllLines(argsFile))
             {
                 if (arg.Length > 0)
-                    start.ArgumentList.Add(arg);
+                    args.Append(args.Length > 0 ? " " : "").Append(QuoteArgument(arg));
             }
+            start.Arguments = args.ToString();
         }
         if (logUrl != null)
         {

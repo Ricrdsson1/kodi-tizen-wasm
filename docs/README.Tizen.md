@@ -78,7 +78,7 @@ tizen install -n kodi-<version>.tpk -t <TV>
 
 Kodi's profile is in the app's data directory, uninstalling the app removes it.
 
-Without `TIZEN_SECURITY_PROFILE`, the package that `dotnet` builds in `bin/Release/tizen80` is signed with the test certificates of the Tizen SDK only, and carries nothing of the builder's. Such a package can be shared; a TV installs it once it is signed again with a certificate for the TV:
+Without `TIZEN_SECURITY_PROFILE`, the package that `dotnet` builds in `bin/Release/tizen40` is signed with the test certificates of the Tizen SDK only, and carries nothing of the builder's. Such a package can be shared; a TV installs it once it is signed again with a certificate for the TV:
 ```
 tizen package -t tpk -s <security profile> -- kodi-<version>.tpk
 ```
