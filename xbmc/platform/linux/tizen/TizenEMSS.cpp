@@ -103,8 +103,12 @@ struct EsPacket
   void* hdr10p;
 };
 
+// The layout on a TV. On x86 (the emulator) 64-bit members are 4-byte aligned, as in the
+// emulator's ESPlayer.
+#if defined(__arm__)
 static_assert(offsetof(TizenEmssVideoColor, primaryRX) == 56 && sizeof(TizenEmssVideoColor) == 136,
               "TizenEmssVideoColor has the layout of esplusplayer_matroska_color");
+#endif
 
 struct VideoStreamInfo
 {

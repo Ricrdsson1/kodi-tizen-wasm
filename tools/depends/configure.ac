@@ -310,7 +310,7 @@ case $host in
       use_linker=wasm-ld
     fi
   ;;
-  arm-webos-linux-gnueabi|arm-starfish-linux-gnueabi|arm-tizen-linux-gnueabi)
+  arm-webos-linux-gnueabi|arm-starfish-linux-gnueabi|arm-tizen-linux-gnueabi|i686-tizen-linux-gnu)
     lto_wrap_prefix=gcc-
   ;;
   *darwin*)
@@ -443,6 +443,23 @@ case $host in
     use_toolchain="${use_toolchain:-/usr}"
     platform_cppflags="-DPIC -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64"
     platform_cflags="-fPIC -march=armv7-a -mfpu=neon -mfloat-abi=softfp -mtune=cortex-a53 -Wno-psabi"
+    platform_cxxflags="$platform_cflags -static-libstdc++"
+    optimize_flags="-O2"
+    platform_ldflags="-Wl,-rpath-link=$prefix/$deps_dir/lib -static-libstdc++ -static-libgcc"
+    platform_os="linux"
+    meson_system="linux"
+    target_platform="tizen"
+    app_rendersystem="gles"
+  ;;
+  i686-tizen-linux-gnu)
+    # The TV emulator of Tizen Studio: x86, glibc 2.24 (Tizen 5.5).
+    meson_cpu="x86"
+    if test "x$use_cpu" = "xauto"; then
+      use_cpu="i686"
+    fi
+    use_toolchain="${use_toolchain:-/usr}"
+    platform_cppflags="-DPIC -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64"
+    platform_cflags="-fPIC -march=i686 -msse2 -mfpmath=sse"
     platform_cxxflags="$platform_cflags -static-libstdc++"
     optimize_flags="-O2"
     platform_ldflags="-Wl,-rpath-link=$prefix/$deps_dir/lib -static-libstdc++ -static-libgcc"

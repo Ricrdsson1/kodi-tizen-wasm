@@ -4,18 +4,40 @@
 # headers and libraries it lacks, and a GCC 13 cross compiler against it. The GCC 9.2 of
 # Tizen Studio is too old for Kodi's C++20.
 #
-# Usage: build.sh <prefix>
+# Usage: build.sh <prefix> [x86]
 #   <prefix>/sysroot                    the sysroot
 #   <prefix>/arm-tizen-linux-gnueabi    the toolchain, for tools/depends' --with-toolchain
 # TIZEN_STUDIO (default ~/tizen-studio) has to have the TIZEN-8.0 native app development
 # package installed.
+#
+# With x86 it builds for the TV emulator of Tizen Studio instead (i686, glibc 2.24), from
+# the Tizen 5.5 emulator rootstrap in ROOTSTRAP, e.g. mobile-5.5-emulator.core of
+# https://download.tizen.org/sdk/tizenstudio/official/binary/, so that Kodi also runs on
+# the older Tizen of the emulator: <prefix>/i686-tizen-linux-gnu.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 PREFIX=$(mkdir -p "$1" && cd "$1" && pwd)
+ARCH=${2:-arm}
 TIZEN_STUDIO=${TIZEN_STUDIO:-$HOME/tizen-studio}
-ROOTSTRAP=$TIZEN_STUDIO/platforms/tizen-8.0/tizen/rootstraps/tizen-8.0-device.core
-TARGET=arm-tizen-linux-gnueabi
+case $ARCH in
+  arm)
+    ROOTSTRAP=$TIZEN_STUDIO/platforms/tizen-8.0/tizen/rootstraps/tizen-8.0-device.core
+    TARGET=arm-tizen-linux-gnueabi
+    GLIBC_VERSION=2.30
+    ARCH_FLAGS=(--with-arch=armv7-a --with-float=softfp --with-fpu=neon --with-mode=arm)
+    ;;
+  x86)
+    ROOTSTRAP=${ROOTSTRAP:?ROOTSTRAP has to name a Tizen 5.5 emulator rootstrap}
+    TARGET=i686-tizen-linux-gnu
+    GLIBC_VERSION=2.24
+    ARCH_FLAGS=(--with-arch=i686 --with-tune=generic)
+    ;;
+  *)
+    echo "Unknown architecture $ARCH" >&2
+    exit 1
+    ;;
+esac
 TOOLCHAIN=$PREFIX/$TARGET
 SYSROOT=$PREFIX/sysroot
 SRC=$PREFIX/src
@@ -44,7 +66,7 @@ fetch https://freedesktop.org/software/pulseaudio/releases/$PULSEAUDIO.tar.xz
 
 # 1. Sysroot: the rootstrap, with the EGL, GLES 3 and PulseAudio headers it lacks
 if [ ! -f "$SYSROOT/.rootstrap" ]; then
-  [ -d "$ROOTSTRAP" ] || { echo "No Tizen 8.0 TV rootstrap in $ROOTSTRAP" >&2; exit 1; }
+  [ -d "$ROOTSTRAP" ] || { echo "No rootstrap in $ROOTSTRAP" >&2; exit 1; }
   rm -rf "$SYSROOT"
   cp -a "$ROOTSTRAP" "$SYSROOT"
   mkdir -p "$SYSROOT/usr/include/EGL" "$SYSROOT/usr/include/GLES3" "$SYSROOT/usr/include/pulse"
@@ -79,8 +101,8 @@ if [ ! -x "$TOOLCHAIN/bin/$TARGET-g++" ]; then
    make -j"$JOBS" && make install)
   (cd "$PREFIX/build/gcc" && PATH=$TOOLCHAIN/bin:$PATH &&
    "$SRC/$GCC/configure" --target=$TARGET --prefix="$TOOLCHAIN" --with-sysroot="$SYSROOT" \
-     --with-glibc-version=2.30 --enable-languages=c,c++ --with-arch=armv7-a --with-float=softfp \
-     --with-fpu=neon --with-mode=arm --disable-multilib --disable-nls --disable-bootstrap \
+     --with-glibc-version=$GLIBC_VERSION --enable-languages=c,c++ "${ARCH_FLAGS[@]}" \
+     --disable-multilib --disable-nls --disable-bootstrap \
      --enable-threads=posix --enable-__cxa_atexit --enable-shared --enable-linker-build-id \
      --disable-libsanitizer --disable-libquadmath --disable-libssp --disable-libgomp \
      --disable-libvtv --disable-libitm --enable-libstdcxx-time=yes &&
