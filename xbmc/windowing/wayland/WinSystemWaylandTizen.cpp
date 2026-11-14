@@ -474,6 +474,21 @@ void CWinSystemWaylandTizen::ApplyOpaqueRegion()
   // where Kodi draws no GUI.
 }
 
+void CWinSystemWaylandTizen::OnConfigure(std::uint32_t serial,
+                                         CSizeInt size,
+                                         IShellSurface::StateBitset state)
+{
+  // Older TVs (zxdg_shell_v6) answer the request for full screen with a maximized window
+  // of the screen's size. Kodi would draw window decorations into it then, and its GUI
+  // ended up outside the screen. A TV has no other kind of window.
+  if (state.test(IShellSurface::STATE_MAXIMIZED))
+  {
+    state.reset(IShellSurface::STATE_MAXIMIZED);
+    state.set(IShellSurface::STATE_FULLSCREEN);
+  }
+  CWinSystemWayland::OnConfigure(serial, size, state);
+}
+
 bool CWinSystemWaylandTizen::HasCursor()
 {
   return false;

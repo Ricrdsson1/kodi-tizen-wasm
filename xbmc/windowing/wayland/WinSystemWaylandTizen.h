@@ -56,6 +56,7 @@ public:
 protected:
   std::unique_ptr<CSeat> CreateSeat(std::uint32_t name, wayland::seat_t& seat) override;
   void ApplyOpaqueRegion() override;
+  void OnConfigure(std::uint32_t serial, CSizeInt size, IShellSurface::StateBitset state) override;
 
 private:
   void GrabRemoteKeys();
