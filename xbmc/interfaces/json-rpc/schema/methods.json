@@ -149,6 +149,10 @@
         "ControlPVR": {
           "type": "boolean",
           "required": true
+        },
+        "WriteSetting": {
+          "type": "boolean",
+          "required": true
         }
       }
     }
@@ -215,6 +219,9 @@
             "$ref": "Optional.Boolean"
           },
           "Sources": {
+            "$ref": "Optional.Boolean"
+          },
+          "Files": {
             "$ref": "Optional.Boolean"
           }
         }
@@ -586,6 +593,14 @@
         "required": true
       }
     ],
+    "returns": "string"
+  },
+  "Player.NotifyAudioChainReady": {
+    "type": "method",
+    "description": "Report that the downstream audio chain has finished settling, releasing a playback hold early. Intended for an add-on that can observe an AV processor or receiver directly; ignored when nothing is holding",
+    "transport": "Response",
+    "permission": "ControlPlayback",
+    "params": [],
     "returns": "string"
   },
   "Player.GetAudioDelay": {
@@ -4438,7 +4453,9 @@
       },
       {
         "name": "lastplayed",
-        "$ref": "Optional.String"
+        "$ref": "Optional.String",
+        "description":
+            "An empty string clears it, which is only allowed when the resulting playcount is 0."
       },
       {
         "name": "originaltitle",
@@ -4677,7 +4694,9 @@
       },
       {
         "name": "lastplayed",
-        "$ref": "Optional.String"
+        "$ref": "Optional.String",
+        "description":
+            "An empty string clears it, which is only allowed when every episode's resulting playcount is 0."
       },
       {
         "name": "originaltitle",
@@ -4844,7 +4863,9 @@
       },
       {
         "name": "lastplayed",
-        "$ref": "Optional.String"
+        "$ref": "Optional.String",
+        "description":
+            "An empty string clears it, which is only allowed when the resulting playcount is 0."
       },
       {
         "name": "writer",
@@ -5019,7 +5040,9 @@
       },
       {
         "name": "lastplayed",
-        "$ref": "Optional.String"
+        "$ref": "Optional.String",
+        "description":
+            "An empty string clears it, which is only allowed when the resulting playcount is 0."
       },
       {
         "name": "thumbnail",

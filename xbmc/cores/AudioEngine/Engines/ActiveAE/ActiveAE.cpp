@@ -44,6 +44,7 @@ constexpr float MIN_WATER_LEVEL = 0.02f; // min buffer time to prevent underrun
 constexpr float MIN_WATER_LEVEL_RESAMPLE = 0.1f; // min buffer time in resample mode
 constexpr float BUFFER_LEVEL_INCREMENT = 0.0001f; // increment step for ramp-up
 constexpr double MAX_BUFFER_TIME = 0.1; // max time of a buffer in seconds;
+constexpr double MAX_LATE_START_MS = 500.0; // late start of audio left to the player's clock
 
 //! \brief Retry interval for a sink that will not open, doubling to a ceiling.
 //! A device that returns announces itself, so only a fault that clears by itself needs the
@@ -464,7 +465,7 @@ void CActiveAE::StateMachine(int signal, Protocol *port, Message *msg)
           return;
         case CActiveAEDataProtocol::FREESTREAM:
           MsgStreamFree *msgStreamFree;
-          msgStreamFree = *(MsgStreamFree**)msg->data;
+          msgStreamFree = reinterpret_cast<MsgStreamFree*>(msg->data);
           DiscardStream(msgStreamFree->stream);
           msg->Reply(CActiveAEDataProtocol::ACC);
           return;
@@ -758,9 +759,29 @@ void CActiveAE::StateMachine(int signal, Protocol *port, Message *msg)
           stream = *(CActiveAEStream**)msg->data;
           if (!stream->m_paused && m_streams.size() == 1)
           {
-            FlushEngine();
+            // A RAW AudioTrack would otherwise play its queued audio on resume, ahead of the sync
+            // correction. Discarding it makes resume start on an empty sink, as after a seek. As
+            // that lengthens the gap on resume, only where the queued audio disturbs it.
+            const CAEStreamInfo::DataType type{m_sinkFormat.m_streamInfo.m_type};
+            const bool discard =
+                m_mode == MODE_TRANSCODE ||
+                (m_mode == MODE_RAW && (type == CAEStreamInfo::STREAM_TYPE_TRUEHD ||
+                                        type == CAEStreamInfo::STREAM_TYPE_DTSHD_MA ||
+                                        type == CAEStreamInfo::STREAM_TYPE_DTSHD));
+            FlushEngine(discard);
             streaming = false;
             m_sink.m_controlPort.SendOutMessage(CSinkControlProtocol::STREAMING, &streaming, sizeof(bool));
+          }
+          stream->m_paused = true;
+          return;
+        case CActiveAEControlProtocol::HOLDSTREAM:
+          // A pause that leaves STREAMING set, so the sink keeps the wire alive for the hold.
+          stream = *(CActiveAEStream**)msg->data;
+          // The filler repeats the last burst, so only into a gap this stream alone left.
+          if (!stream->m_paused && m_streams.size() == 1)
+          {
+            FlushEngine();
+            m_sink.m_controlPort.SendOutMessage(CSinkControlProtocol::ARMFILLER);
           }
           stream->m_paused = true;
           return;
@@ -1280,6 +1301,10 @@ void CActiveAE::Configure(AEAudioFormat *desiredFmt)
     m_currentDeviceFollowsDefault =
         requestedDefaultDevice || !IsSameDevice(m_openedDriver, m_openedDevice, dev);
     initSink = true;
+    // The sink was reopened (format, device or driver), so a downstream device has to acquire
+    // the stream again.
+    for (auto* activeStream : m_streams)
+      activeStream->m_sinkFormatChanged = true;
     m_stats.Reset(m_sinkFormat.m_sampleRate, m_mode == MODE_PCM);
     m_sink.m_controlPort.SendOutMessage(CSinkControlProtocol::VOLUME, &m_volume, sizeof(float));
 
@@ -1443,8 +1468,10 @@ void CActiveAE::Configure(AEAudioFormat *desiredFmt)
         // if input format does not follow ffmpeg channel mask, we may need to remap channels
         (*it)->InitRemapper();
       }
+      double resampleRatio = 1.0;
       if (initSink && (*it)->m_processingBuffers)
       {
+        resampleRatio = (*it)->m_processingBuffers->GetRR();
         (*it)->m_processingBuffers->Flush();
         m_discardBufferPools.push_back((*it)->m_processingBuffers->GetResampleBuffers());
         m_discardBufferPools.push_back((*it)->m_processingBuffers->GetAtempoBuffers());
@@ -1458,6 +1485,10 @@ void CActiveAE::Configure(AEAudioFormat *desiredFmt)
 
         (*it)->m_processingBuffers->Create(MAX_CACHE_LEVEL * 1000, false, m_settings.stereoupmix,
                                            m_settings.normalizelevels, m_settings.mixSubLevel);
+
+        // A stream only sends its resample ratio when it changes, so keep it
+        // across a sink change
+        (*it)->m_processingBuffers->SetRR(resampleRatio, m_settings.atempoThreshold);
       }
       if (m_mode == MODE_TRANSCODE || m_streams.size() > 1)
         (*it)->m_processingBuffers->FillBuffer();
@@ -1655,13 +1686,13 @@ void CActiveAE::SFlushStream(CActiveAEStream *stream)
   // flush the engine if we only have a single stream
   if (m_streams.size() == 1)
   {
-    FlushEngine();
+    FlushEngine(true);
   }
 
   m_stats.UpdateStream(stream);
 }
 
-void CActiveAE::FlushEngine()
+void CActiveAE::FlushEngine(bool discardOutput)
 {
   if (m_sinkBuffers)
     m_sinkBuffers->Flush();
@@ -1691,7 +1722,8 @@ void CActiveAE::FlushEngine()
 
   // send message to sink
   Message *reply;
-  if (m_sink.m_controlPort.SendOutMessageSync(CSinkControlProtocol::FLUSH, &reply, 2s))
+  if (m_sink.m_controlPort.SendOutMessageSync(CSinkControlProtocol::FLUSH, &reply, 2s,
+                                              &discardOutput, sizeof(discardOutput)))
   {
     bool success = reply->signal == CSinkControlProtocol::ACC;
     if (!success)
@@ -1732,17 +1764,11 @@ void CActiveAE::ClearDiscardedBuffers()
 
 void CActiveAE::SStopSound(CActiveAESound *sound)
 {
-  std::list<SoundState>::iterator it;
-  for (it=m_sounds_playing.begin(); it!=m_sounds_playing.end(); ++it)
-  {
-    if (it->sound == sound)
-    {
-      if (sound->GetChannel() != AE_CH_NULL)
-        m_aeGUISoundForce = false;
-      m_sounds_playing.erase(it);
-      return;
-    }
-  }
+  // A sound played again before it finished is in the list once for each play.
+  const auto removed = std::erase_if(m_sounds_playing, [sound](const SoundState& state)
+                                     { return state.sound == sound; });
+  if (removed > 0 && sound->GetChannel() != AE_CH_NULL)
+    m_aeGUISoundForce = false;
 }
 
 void CActiveAE::DiscardSound(CActiveAESound *sound)
@@ -2131,8 +2157,7 @@ bool CActiveAE::RunStages()
 
   // TrueHD is very jumpy, meaning the frames don't come in equidistantly. They are only smoothed
   // at the end when the IEC packing happens. Therefore adjust earlier.
-  const bool isTrueHDPassthrough =
-      (m_mode == MODE_RAW && m_sinkFormat.m_streamInfo.m_type == CAEStreamInfo::STREAM_TYPE_TRUEHD);
+  const bool isTrueHDPassthrough{IsTrueHDPassthrough()};
 
   if (m_settings.lowLatencyMode)
   {
@@ -2455,7 +2480,9 @@ bool CActiveAE::RunStages()
               CLog::Log(LOGWARNING, "ActiveAE::{} - viz ran out of free buffers", __FUNCTION__);
             AEDelayStatus status;
             m_stats.GetDelay(status);
-            int64_t now = std::chrono::steady_clock::now().time_since_epoch().count();
+            int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now().time_since_epoch())
+                              .count();
             int64_t timestamp = now + status.GetDelay() * 1000;
             busy |= m_vizBuffers->ResampleBuffers(timestamp);
             while(!m_vizBuffers->m_outputSamples.empty())
@@ -2571,6 +2598,12 @@ bool CActiveAE::HasWork()
   return false;
 }
 
+bool CActiveAE::IsTrueHDPassthrough() const
+{
+  return m_mode == MODE_RAW &&
+         m_sinkFormat.m_streamInfo.m_type == CAEStreamInfo::STREAM_TYPE_TRUEHD;
+}
+
 CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
 {
   CSampleBuffer *ret = NULL;
@@ -2584,6 +2617,7 @@ CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
     stream->m_syncError.Flush(100ms);
     stream->m_processingBuffers->SetRR(1.0, m_settings.atempoThreshold);
     stream->m_resampleIntegral = 0;
+    stream->m_lateStartHandedOver = false;
     CLog::Log(LOGDEBUG,"ActiveAE - start sync of audio stream");
   }
 
@@ -2605,6 +2639,27 @@ CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
                                           : stream->GetErrorInterval();
   bool newerror = stream->m_syncError.Get(error, timeout);
 
+  if (newerror && stream->m_lateStartHandedOver)
+  {
+    // Mostly averaged before the player moved its clock to the late audio, so neither acted upon
+    // nor reported.
+    stream->m_lateStartHandedOver = false;
+    stream->m_syncError.Flush(timeout);
+    newerror = false;
+    CLog::Log(LOGDEBUG, "ActiveAE::SyncStream - average error {:f} dropped", error);
+  }
+
+  // Without resampling, the player moves its clock to the audio once the error exceeds its own
+  // limit. Audio starting late is therefore left to the player, as skipping it would lose the
+  // start of the audio. The errors of TrueHD passthrough are scaled down, so they do not tell how
+  // late the audio is.
+  const bool clockFollowsAudio{!stream->m_resampleMode && !IsTrueHDPassthrough()};
+  const auto keepAudible = [&](double syncError)
+  {
+    return fabs(syncError) <= threshold ||
+           (clockFollowsAudio && syncError < 0 && -syncError <= MAX_LATE_START_MS);
+  };
+
   if (newerror && fabs(error) > threshold && stream->m_syncState == CAESyncInfo::AESyncState::SYNC_INSYNC)
   {
     stream->m_syncState = CAESyncInfo::AESyncState::SYNC_ADJUST;
@@ -2616,16 +2671,31 @@ CSampleBuffer* CActiveAE::SyncStream(CActiveAEStream *stream)
   }
   else if (newerror && stream->m_syncState == CAESyncInfo::AESyncState::SYNC_MUTE)
   {
-    stream->m_syncState = CAESyncInfo::AESyncState::SYNC_ADJUST;
-    stream->m_lastSyncError = error;
-    CLog::Log(LOGDEBUG, "ActiveAE::SyncStream - average error of {:f}, start adjusting", error);
+    if (clockFollowsAudio && error < 0 && -error <= MAX_LATE_START_MS)
+    {
+      stream->m_syncState = CAESyncInfo::AESyncState::SYNC_INSYNC;
+      stream->m_syncError.Flush(1000ms);
+      // Reports the error to the player right away
+      stream->m_syncError.Correction(error);
+      stream->m_resampleIntegral = 0;
+      stream->m_lateStartHandedOver = true;
+      CLog::Log(LOGDEBUG,
+                "ActiveAE::SyncStream - average error of {:f}, left to the player's clock", error);
+    }
+    else
+    {
+      stream->m_syncState = CAESyncInfo::AESyncState::SYNC_ADJUST;
+      stream->m_lastSyncError = error;
+      CLog::Log(LOGDEBUG, "ActiveAE::SyncStream - average error of {:f}, start adjusting", error);
+    }
   }
 
-  // While the error is averaged, samples that already play close to in sync stay audible, so that
-  // the start of the audio is not lost.
+  // While the error is averaged, samples that will not be skipped stay audible. Not in passthrough,
+  // where the correction that follows interrupts the bitstream the receiver just locked on to.
   double errorSoFar{0.0};
-  const bool closeToSync{stream->m_syncError.GetSoFar(errorSoFar) && fabs(errorSoFar) <= threshold};
-  if (stream->m_syncState == CAESyncInfo::AESyncState::SYNC_MUTE && !closeToSync)
+  const bool audible{m_mode != MODE_RAW && stream->m_syncError.GetSoFar(errorSoFar) &&
+                     keepAudible(errorSoFar)};
+  if (stream->m_syncState == CAESyncInfo::AESyncState::SYNC_MUTE && !audible)
   {
     CSampleBuffer *buf = stream->m_processingBuffers->m_outputSamples.front();
     if (m_mode == MODE_RAW)
@@ -3717,6 +3787,12 @@ void CActiveAE::PauseStream(CActiveAEStream *stream, bool pause)
   else
     m_controlPort.SendOutMessage(CActiveAEControlProtocol::RESUMESTREAM,
                                    &stream, sizeof(CActiveAEStream*));
+}
+
+void CActiveAE::HoldStream(CActiveAEStream* stream)
+{
+  m_controlPort.SendOutMessage(CActiveAEControlProtocol::HOLDSTREAM, &stream,
+                               sizeof(CActiveAEStream*));
 }
 
 void CActiveAE::SetStreamAmplification(CActiveAEStream *stream, float amplify)

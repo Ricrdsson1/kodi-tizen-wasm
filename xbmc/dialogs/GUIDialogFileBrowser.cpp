@@ -60,10 +60,10 @@ using KODI::MEDIA::MediaSection;
 #define CONTROL_FLIP          416
 
 CGUIDialogFileBrowser::CGUIDialogFileBrowser()
-    : CGUIDialog(WINDOW_DIALOG_FILE_BROWSER, "FileBrowser.xml")
+    : CGUIDialog(WINDOW_DIALOG_FILE_BROWSER, "FileBrowser.xml"),
+      m_vecItems(std::make_unique<CFileItemList>()),
+      m_Directory(std::make_unique<CFileItem>())
 {
-  m_Directory = new CFileItem;
-  m_vecItems = new CFileItemList;
   m_bConfirmed = false;
   m_Directory->SetFolder(true);
   m_browsingForFolders = 0;
@@ -78,11 +78,7 @@ CGUIDialogFileBrowser::CGUIDialogFileBrowser()
   m_loadType = KEEP_IN_MEMORY;
 }
 
-CGUIDialogFileBrowser::~CGUIDialogFileBrowser()
-{
-  delete m_Directory;
-  delete m_vecItems;
-}
+CGUIDialogFileBrowser::~CGUIDialogFileBrowser() = default;
 
 bool CGUIDialogFileBrowser::OnAction(const CAction &action)
 {
@@ -392,7 +388,7 @@ void CGUIDialogFileBrowser::Update(const std::string &strDirectory)
     {
       if (URIUtils::GetParentPath(strDirectory, strParentPath))
       {
-        CFileItemPtr pItem(new CFileItem(".."));
+        auto pItem = std::make_shared<CFileItem>("..");
         pItem->SetPath(strParentPath);
         pItem->SetFolder(true);
         pItem->SetIsShareOrDrive(false);
@@ -403,7 +399,7 @@ void CGUIDialogFileBrowser::Update(const std::string &strDirectory)
     {
       // yes, this is the root of a share
       // add parent path to the virtual directory
-      CFileItemPtr pItem(new CFileItem(".."));
+      auto pItem = std::make_shared<CFileItem>("..");
       pItem->SetPath("");
       pItem->SetIsShareOrDrive(false);
       pItem->SetFolder(true);
@@ -447,16 +443,16 @@ void CGUIDialogFileBrowser::Update(const std::string &strDirectory)
        CServiceBroker::GetSettingsComponent()->GetProfileManager()->IsMasterProfile() ||
        g_passwordManager.bMasterUser))
   { // we are in the virtual directory - add the "Add Network Location" item
-    CFileItemPtr pItem(
-        new CFileItem(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(1032)));
+    auto pItem = std::make_shared<CFileItem>(
+        CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(1032));
     pItem->SetPath("net://");
     pItem->SetFolder(true);
     m_vecItems->Add(pItem);
   }
   if (m_Directory->GetPath().empty() && m_addSourceSection)
   {
-    CFileItemPtr pItem(
-        new CFileItem(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(21359)));
+    auto pItem = std::make_shared<CFileItem>(
+        CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(21359));
     pItem->SetPath("source://");
     pItem->SetFolder(true);
     m_vecItems->Add(pItem);
@@ -518,7 +514,7 @@ void CGUIDialogFileBrowser::FrameMove()
       SET_CONTROL_LABEL(CONTROL_LABEL_PATH, safePath);
     }
     if ((!m_browsingForFolders && (*m_vecItems)[item]->IsFolder()) ||
-        ((*m_vecItems)[item]->GetPath() == KODI::IMAGE_CHOICE::BROWSE))
+        ((*m_vecItems)[item]->GetPath() == KODI::ART::CHOICE::BROWSE))
     {
       CONTROL_DISABLE(CONTROL_OK);
     }
@@ -661,7 +657,7 @@ bool CGUIDialogFileBrowser::ShowAndGetImage(const CFileItemList& items,
   browser->m_vecItems->Append(items);
   if (true)
   {
-    CFileItemPtr item(new CFileItem(KODI::IMAGE_CHOICE::BROWSE, false));
+    auto item = std::make_shared<CFileItem>(KODI::ART::CHOICE::BROWSE, false);
     item->SetLabel(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20153));
     item->SetArt(KODI::ART::TYPE::ICON, KODI::ART::DEFAULT::FOLDER);
     browser->m_vecItems->Add(item);
@@ -673,7 +669,7 @@ bool CGUIDialogFileBrowser::ShowAndGetImage(const CFileItemList& items,
   if (confirmed)
   {
     result = browser->m_selectedPath;
-    if (result == KODI::IMAGE_CHOICE::BROWSE)
+    if (result == KODI::ART::CHOICE::BROWSE)
     { // "Browse for thumb"
       CServiceBroker::GetGUI()->GetWindowManager().Delete(browser->GetID());
       return ShowAndGetImage(
@@ -787,7 +783,7 @@ bool CGUIDialogFileBrowser::ShowAndGetFile(const std::string &directory, const s
   {
     browser->m_vecItems->Clear();
     CDirectory::GetDirectory(directory,*browser->m_vecItems, "", DIR_FLAG_DEFAULTS);
-    CFileItemPtr item(new CFileItem("file://Browse", false));
+    auto item = std::make_shared<CFileItem>("file://Browse", false);
     item->SetLabel(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20153));
     item->SetArt(KODI::ART::TYPE::ICON, KODI::ART::DEFAULT::FOLDER);
     browser->m_vecItems->Add(item);

@@ -135,18 +135,16 @@ IDirectory* CDirectoryFactory::Create(const CURL& url)
 
   // Load directory flag from the VFS. If the url is truly a directory, don't
   // attempt to use a file-directory loader.
-  bool canBeFileDirectory = true;
+  bool canBeFileDirectory = url.SupportsPathOperations();
 
   struct __stat64 st = {};
   static constexpr auto excludedProtocols =
-      make_set<std::string_view>({"upnp", "addons", "favourites", "sources"});
-  // Over HTTP, a path without a trailing slash is a file. Asking the server would cost
-  // a HEAD request, which live streams may never answer, and playback would wait for
-  // its timeouts.
-  const bool httpFile{(url.IsProtocol("http") || url.IsProtocol("https")) &&
-                      !URIUtils::HasSlashAtEnd(url.Get(), true)};
-  const bool exclude{excludedProtocols.contains(url.GetProtocol()) || httpFile};
-  if (!exclude && CFile::Stat(URIUtils::SubstitutePath(url), &st) == 0)
+      make_set<std::string_view>({"upnp", "addons", "favourites", "sources", "stack"});
+  // Stat-ing an internet stream costs a network round trip on every playback
+  // File-directory loaders are chosen by extension, so extensionless paths need no stat
+  const bool exclude{excludedProtocols.contains(url.GetProtocol()) ||
+                     URIUtils::IsInternetStream(url) || url.GetFileType().empty()};
+  if (canBeFileDirectory && !exclude && CFile::Stat(URIUtils::SubstitutePath(url), &st) == 0)
   {
     item.SetFolder(S_ISDIR(st.st_mode));
     canBeFileDirectory = !item.IsFolder();

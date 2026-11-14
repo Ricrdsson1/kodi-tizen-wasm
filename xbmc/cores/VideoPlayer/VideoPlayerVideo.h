@@ -14,6 +14,7 @@
 #include "DVDOverlayContainer.h"
 #include "DVDStreamInfo.h"
 #include "IVideoPlayer.h"
+#include "LiveGeometryMonitor.h"
 #include "PTSTracker.h"
 #include "cores/VideoPlayer/VideoRenderers/RenderManager.h"
 #include "threads/Thread.h"
@@ -73,6 +74,7 @@ public:
   std::string GetPlayerInfo() override;
   int GetVideoBitrate() override;
   void SetSpeed(int iSpeed) override;
+  std::string GetContentGeometryInfo() override { return m_liveGeometry.GetDebugInfo(); }
 
   // classes
   CDVDOverlayContainer* m_pOverlayContainer;
@@ -98,13 +100,14 @@ protected:
                                 std::chrono::milliseconds timeout,
                                 int& priority);
 
-  EOutputState OutputPicture(const VideoPicture* src);
+  EOutputState OutputPicture(VideoPicture* src);
   void ProcessOverlays(const VideoPicture* pSource, double pts);
   void OpenStream(CDVDStreamInfo& hint, std::unique_ptr<CDVDVideoCodec> codec);
 
   void ResetFrameRateCalc();
   void CalcFrameRate();
   int CalcDropRequirement(double pts);
+  void ResetSeekDrop();
 
   double m_iSubtitleDelay;
 
@@ -133,6 +136,12 @@ protected:
   IDVDStreamPlayer::ESyncState m_syncState;
   std::atomic_bool m_bAbortOutput;
 
+  // Pictures of packets dropped to reach a seek target, see ProcessDecoderOutput()
+  bool m_awaitingFirstKeptPacket{true};
+  bool m_seekDropping{false};
+  double m_seekDropBeforePts{DVD_NOPTS_VALUE};
+  int m_seekDroppedPictures{0};
+
   BitstreamStats m_videoStats;
 
   CDVDMessageQueue m_messageQueue;
@@ -144,6 +153,7 @@ protected:
   CDroppingStats m_droppingStats;
   CRenderManager& m_renderManager;
   VideoPicture m_picture;
+  CLiveGeometryMonitor m_liveGeometry;
 
   EOutputState m_outputSate{OUTPUT_NORMAL};
 };

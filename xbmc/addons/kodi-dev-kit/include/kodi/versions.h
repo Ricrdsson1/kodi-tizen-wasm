@@ -44,7 +44,7 @@
                                                       "addon-instance/" \
                                                       "c-api/addon_base.h"
 
-#define ADDON_GLOBAL_VERSION_GENERAL                  "1.0.5"
+#define ADDON_GLOBAL_VERSION_GENERAL                  "1.0.6"
 #define ADDON_GLOBAL_VERSION_GENERAL_MIN              "1.0.4"
 #define ADDON_GLOBAL_VERSION_GENERAL_XML_ID           "kodi.binary.global.general"
 #define ADDON_GLOBAL_VERSION_GENERAL_DEPENDS          "General.h"
@@ -97,7 +97,7 @@
 #define ADDON_INSTANCE_VERSION_AUDIOENCODER_DEPENDS   "c-api/addon-instance/audioencoder.h" \
                                                       "addon-instance/AudioEncoder.h"
 
-#define ADDON_INSTANCE_VERSION_GAME                   "8.4.0"
+#define ADDON_INSTANCE_VERSION_GAME                   "8.6.0"
 #define ADDON_INSTANCE_VERSION_GAME_MIN               "8.2.0"
 #define ADDON_INSTANCE_VERSION_GAME_XML_ID            "kodi.binary.instance.game"
 #define ADDON_INSTANCE_VERSION_GAME_DEPENDS           "c-api/addon-instance/game.h" \

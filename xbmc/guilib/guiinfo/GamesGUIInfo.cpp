@@ -24,6 +24,7 @@
 #include "games/GameUtils.h"
 #include "games/addons/GameClient.h"
 #include "games/addons/cheats/GameClientCheats.h"
+#include "games/addons/cheevos/GameClientCheevos.h"
 #include "games/tags/GameInfoTag.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/guiinfo/GUIInfo.h"
@@ -336,7 +337,9 @@ bool CGamesGUIInfo::GetLabel(std::string& value,
         return true;
       }
 
-      const AchievementChallenge challenge = AchievementRuntime().GetShownChallenge();
+      // Counted from 1 by the skin; without a number, the first
+      const unsigned int index = info.GetData1() > 0 ? info.GetData1() - 1 : 0;
+      const AchievementChallenge challenge = AchievementRuntime().GetShownChallenge(index);
 
       value = (info.GetInfo() == RETROPLAYER_ACHIEVEMENTS_CHALLENGE_TITLE) ? challenge.title
                                                                            : challenge.badgeUrl;
@@ -345,6 +348,16 @@ bool CGamesGUIInfo::GetLabel(std::string& value,
     case RETROPLAYER_LEADERBOARD_TRACKER:
     {
       value = AchievementRuntime().GetShownLeaderboardTracker().display;
+      return true;
+    }
+    case RETROPLAYER_LEADERBOARD_TRACKER_TITLE:
+    {
+      value.clear();
+      // Nothing ties a tracker to a leaderboard, so it's only named while a
+      // single leaderboard is being attempted
+      const std::vector<std::string> titles = AchievementRuntime().GetLeaderboardAttemptTitles();
+      if (titles.size() == 1 && !AchievementRuntime().GetShownLeaderboardTracker().display.empty())
+        value = titles.front();
       return true;
     }
     case RETROPLAYER_ACHIEVEMENTS_INDICATOR_TITLE:
@@ -450,7 +463,8 @@ bool CGamesGUIInfo::GetBool(bool& value,
     }
     case RETROPLAYER_ACHIEVEMENTS_HARDCORE:
     {
-      value = CServiceBroker::GetGameServices().GameSettings().GetAchievementsHardcore();
+      const GameClientPtr gameClient = CGameUtils::GetPlayingGameClient();
+      value = gameClient && gameClient->Cheevos().IsHardcoreActive();
       return true;
     }
     default:

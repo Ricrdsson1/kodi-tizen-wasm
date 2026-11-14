@@ -18,6 +18,7 @@
 #include "cores/RetroPlayer/rendering/RenderContext.h"
 #include "cores/RetroPlayer/rendering/contexts/IHwRenderingContext.h"
 #include "messaging/ApplicationMessenger.h"
+#include "rendering/capture/CaptureReadback.h"
 
 #include <atomic>
 #include <chrono>
@@ -385,6 +386,15 @@ protected:
   bool m_current{false};
 };
 
+TEST_P(TestRenderBufferPoolFBOWithContext, ReadCaptureRefusesAnotherPoolsBuffer)
+{
+  CTestCaptureBuffer software;
+  ASSERT_TRUE(software.Allocate(AV_PIX_FMT_RGBA, 4, 4));
+
+  KODI::RENDERING::CAPTURE::ReadbackBuffer pixels;
+  EXPECT_FALSE(m_pool->ReadCapture(&software, pixels));
+}
+
 TEST_P(TestRenderBufferPoolFBOWithContext, CaptureDiscardsAlphaBeforeShaderCopy)
 {
   auto* client = static_cast<CRenderBufferFBO*>(m_pool->GetBuffer(4, 4));
@@ -445,6 +455,29 @@ TEST_P(TestRenderBufferPoolFBOWithContext, ClientFramebufferRemainsStableAcrossS
   EXPECT_EQ(client->GetCurrentFramebuffer(), framebuffer);
   glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
   EXPECT_EQ(glCheckFramebufferStatus(GL_FRAMEBUFFER), GL_FRAMEBUFFER_COMPLETE);
+  EXPECT_EQ(glGetError(), GL_NO_ERROR);
+  client->Release();
+}
+
+TEST_P(TestRenderBufferPoolFBOWithContext, CaptureLeavesClientScissorTestAsItWas)
+{
+  auto* client = m_pool->GetBuffer(4, 4);
+  ASSERT_NE(client, nullptr);
+
+  // Clients such as Dolphin track what they have enabled and don't set it again
+  for (const bool scissor : {true, false})
+  {
+    if (scissor)
+      glEnable(GL_SCISSOR_TEST);
+    else
+      glDisable(GL_SCISSOR_TEST);
+
+    auto* captured = Capture(client);
+    ASSERT_NE(captured, nullptr);
+    EXPECT_EQ(glIsEnabled(GL_SCISSOR_TEST), scissor ? GL_TRUE : GL_FALSE);
+    captured->Release();
+  }
+
   EXPECT_EQ(glGetError(), GL_NO_ERROR);
   client->Release();
 }

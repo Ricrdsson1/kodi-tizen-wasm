@@ -9,13 +9,12 @@ DEPS = ../../Makefile.include Makefile PYTHON3-VERSION ../../download-files.incl
                                  14-wasm-build-wasm-default.patch \
                                  15-wasm-static-hacl.patch \
                                  16-ios-static-nonframework.patch \
-                                 17-ios-simulator-version-min.patch \
-                                 18-ios-objc-fallback.patch \
                                  19-tvos-disable-fork-exec.patch \
                                  20-wasm-runtime-deps.patch \
                                  21-wasm-em-js-deps.patch \
                                  22-wasm-trampoline-static.patch \
-                                 23-wasm-static-linking.patch
+                                 23-wasm-static-linking.patch \
+                                 24-wasm-optional-reference-types.patch
 
 ifeq ($(findstring apple-darwin, $(HOST)), apple-darwin)
   ifeq ($(OS), darwin_embedded)
@@ -31,6 +30,7 @@ ifeq ($(findstring apple-darwin, $(HOST)), apple-darwin)
     export SDKROOT
   endif
   ifeq ($(OS), osx)
+    EXTRA_CONFIGURE+= ac_cv_func_dup3=no ac_cv_func_pipe2=no
     export SDKROOT
   endif
   # required for _localemodule
@@ -68,6 +68,8 @@ ifeq ($(OS),wasm)
   # WebAssembly's indirect calls check the full signature, so the fpcasts
   # CPython and its modules rely on trap without the call trampoline.
   CFLAGS+= -DPY_CALL_TRAMPOLINE
+  # Chromium 85 on Samsung TVs does not support WASM reference types.
+  CFLAGS+= -mno-reference-types
   export CFLAGS
 endif
 
@@ -158,13 +160,11 @@ ifeq ($(OS),wasm)
 	cd $(PLATFORM); patch -p1 -i ../22-wasm-trampoline-static.patch
 # Pending upstream review (python/cpython#156781).
 	cd $(PLATFORM); patch -p1 -i ../23-wasm-static-linking.patch
+	cd $(PLATFORM); patch -p1 -i ../24-wasm-optional-reference-types.patch
 endif
 ifeq ($(findstring iphone,$(TARGET_PLATFORM)),iphone)
-# These three patches are all merged upstream now (python/cpython#156110,
-# #156116, #156113); drop them when we bump python past 3.16.
+# Merged upstream (python/cpython#156110); drop it when we bump python past 3.16.
 	cd $(PLATFORM); patch -p1 -i ../16-ios-static-nonframework.patch
-	cd $(PLATFORM); patch -p1 -i ../17-ios-simulator-version-min.patch
-	cd $(PLATFORM); patch -p1 -i ../18-ios-objc-fallback.patch
 endif
 ifeq ($(findstring appletv,$(TARGET_PLATFORM)),appletv)
 	# TODO: drop once tvOS is built as a real Python platform

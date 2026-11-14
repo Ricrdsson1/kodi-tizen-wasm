@@ -8,10 +8,15 @@
 
 #include "OSScreenSaverWasm.h"
 
+#include "utils/log.h"
+
+#include "platform/wasm/TizenWebApis.h"
+
 #include <emscripten.h>
 #include <emscripten/em_asm.h>
 
 using namespace KODI::WINDOWING::WASM;
+using KODI::PLATFORM::WASM::CTizenWebApis;
 
 namespace
 {
@@ -62,50 +67,22 @@ void SetWakeLockWanted(bool wanted)
   }), wanted ? 1 : 0);
   // clang-format on
 }
-
-// A Samsung TV starts its screensaver over an app regardless of a wake lock, unless the
-// app turns it off through the AppCommon API. The TV may drop the request while its
-// screensaver covers the app, so it is made again when the app is shown.
-// Returns false without that API.
-bool SetTvScreenSaver(bool on)
-{
-  // clang-format off
-  return MAIN_THREAD_EM_ASM_INT(({
-    if (typeof webapis === 'undefined' || !webapis.appcommon)
-      return 0;
-    const kodi = (Module.kodi = Module.kodi || {});
-    const apply = () => {
-      try {
-        const states = webapis.appcommon.AppCommonScreenSaverState;
-        webapis.appcommon.setScreenSaver(
-            kodi.tvScreenSaverOn ? states.SCREEN_SAVER_ON : states.SCREEN_SAVER_OFF, () => {},
-            (e) => console.warn('[kodi] setScreenSaver:', e && (e.name + ' ' + e.message)));
-      } catch (e) {
-        console.warn('[kodi] setScreenSaver:', e);
-      }
-    };
-    if (kodi.tvScreenSaverOn === undefined) {
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && !kodi.tvScreenSaverOn)
-          apply();
-      });
-    }
-    kodi.tvScreenSaverOn = !!$0;
-    apply();
-    return 1;
-  }), on ? 1 : 0) != 0;
-  // clang-format on
-}
 } // namespace
 
 void COSScreenSaverWasm::Inhibit()
 {
-  SetTvScreenSaver(false);
+  if (CTizenWebApis::SetScreenSaverEnabled(false))
+  {
+    CLog::Log(LOGINFO, "OS screensaver: asked the TV to turn its screensaver off");
+  }
   SetWakeLockWanted(true);
 }
 
 void COSScreenSaverWasm::Uninhibit()
 {
-  SetTvScreenSaver(true);
+  if (CTizenWebApis::SetScreenSaverEnabled(true))
+  {
+    CLog::Log(LOGINFO, "OS screensaver: asked the TV to turn its screensaver back on");
+  }
   SetWakeLockWanted(false);
 }

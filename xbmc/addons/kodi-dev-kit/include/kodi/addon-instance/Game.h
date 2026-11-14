@@ -408,6 +408,20 @@ public:
   //----------------------------------------------------------------------------
 
   //============================================================================
+  /// @brief Run a frame that the frontend will roll back afterwards
+  ///
+  /// Used for run-ahead. The emulator advances exactly as in RunFrame(), but
+  /// anything that must only happen once per real frame, such as evaluating
+  /// achievements, is skipped, because the frontend restores the emulator's
+  /// state afterwards.
+  ///
+  /// @return The error, or @ref GAME_ERROR_NOT_IMPLEMENTED if the add-on can't
+  ///         run a frame without side effects
+  ///
+  virtual GAME_ERROR RunFrameSpeculative() { return GAME_ERROR_NOT_IMPLEMENTED; }
+  //----------------------------------------------------------------------------
+
+  //============================================================================
   /// @brief Reset the current game
   ///
   /// @return The error, or @ref GAME_ERROR_NO_ERROR if the game was reset
@@ -1012,6 +1026,39 @@ public:
   //----------------------------------------------------------------------------
 
   //============================================================================
+  /// @brief Serialize the state of the game for run-ahead
+  ///
+  /// The frontend loads this state back after running frames ahead, so the
+  /// add-on may tell it from a savestate the player keeps, as libretro's
+  /// savestate context does. An add-on may refuse a state it couldn't load
+  /// back, and the frontend runs no frames ahead until it accepts one.
+  ///
+  /// @param[in] data The buffer receiving the serialized game data
+  /// @param[in] size The size of the buffer
+  ///
+  /// @return The error, or @ref GAME_ERROR_NO_ERROR if the game was serialized into the buffer
+  ///
+  virtual GAME_ERROR SerializeSpeculative(uint8_t* data, size_t size)
+  {
+    return Serialize(data, size);
+  }
+  //----------------------------------------------------------------------------
+
+  //============================================================================
+  /// @brief Deserialize a state saved by SerializeSpeculative()
+  ///
+  /// @param[in] data A buffer containing the game's new state
+  /// @param[in] size The size of the buffer
+  ///
+  /// @return The error, or @ref GAME_ERROR_NO_ERROR if the game deserialized
+  ///
+  virtual GAME_ERROR DeserializeSpeculative(const uint8_t* data, size_t size)
+  {
+    return Deserialize(data, size);
+  }
+  //----------------------------------------------------------------------------
+
+  //============================================================================
   /// @brief How many bytes the achievement runtime's state needs right now
   ///
   /// Asked each time rather than reserved once, so it grows with the runtime.
@@ -1157,6 +1204,24 @@ public:
   /// @note Added in Game API 8.1.0
   ///
   virtual GAME_ERROR RCSetEncoreModeEnabled(bool enabled) { return GAME_ERROR_NOT_IMPLEMENTED; }
+  //----------------------------------------------------------------------------
+
+  //============================================================================
+  /// @brief Turn one of the loaded game's achievement sets on or off
+  ///
+  /// The achievements and leaderboards of a set that is off are not evaluated.
+  ///
+  /// @param[in] setId The set, as given to RCOnAchievementSets()
+  /// @param[in] enabled True to turn the set on
+  ///
+  /// @return The error, or @ref GAME_ERROR_NO_ERROR on success
+  ///
+  /// @note Added in Game API 8.5.0
+  ///
+  virtual GAME_ERROR RCSetAchievementSetEnabled(unsigned int setId, bool enabled)
+  {
+    return GAME_ERROR_NOT_IMPLEMENTED;
+  }
   //----------------------------------------------------------------------------
   //============================================================================
   /// @brief Activate an achievement
@@ -1467,6 +1532,24 @@ public:
 
   //============================================================================
   /// @brief **Callback to Kodi Function**\n
+  /// Tell Kodi the loaded game's achievement sets, and which set and type each
+  /// of its achievements has
+  ///
+  /// @param[in] data The sets and the achievements' details
+  ///
+  /// @remarks Only called from the add-on itself, after RCOnGameLoaded(). Does
+  ///          nothing with a version of Kodi older than Game API 8.5.0.
+  ///
+  /// @note Added in Game API 8.5.0
+  ///
+  void RCOnAchievementSets(const game_rc_achievement_sets& data)
+  {
+    if (IsInstanceAPIVersionAtLeast(8, 5, 0))
+      m_instanceData->toKodi->RCOnAchievementSets(m_instanceData->toKodi->kodiInstance, &data);
+  }
+
+  //============================================================================
+  /// @brief **Callback to Kodi Function**\n
   /// Show, update or hide how far along a measured achievement is
   ///
   /// Some achievements are measured rather than simply locked or unlocked, and
@@ -1729,6 +1812,16 @@ private:
 
     instance->game->toAddon->FreeString = ADDON_FreeString;
 
+    // An older Kodi's table ends before these entries
+    if (IsInstanceAPIVersionAtLeast(8, 5, 0))
+      instance->game->toAddon->RCSetAchievementSetEnabled = ADDON_RCSetAchievementSetEnabled;
+    if (IsInstanceAPIVersionAtLeast(8, 6, 0))
+    {
+      instance->game->toAddon->RunFrameSpeculative = ADDON_RunFrameSpeculative;
+      instance->game->toAddon->SerializeSpeculative = ADDON_SerializeSpeculative;
+      instance->game->toAddon->DeserializeSpeculative = ADDON_DeserializeSpeculative;
+    }
+
     m_instanceData = instance->game;
     m_instanceData->toAddon->addonInstance = this;
   }
@@ -1786,6 +1879,27 @@ private:
   inline static GAME_ERROR ADDON_RunFrame(const AddonInstance_Game* instance)
   {
     return static_cast<CInstanceGame*>(instance->toAddon->addonInstance)->RunFrame();
+  }
+
+  inline static GAME_ERROR ADDON_RunFrameSpeculative(const AddonInstance_Game* instance)
+  {
+    return static_cast<CInstanceGame*>(instance->toAddon->addonInstance)->RunFrameSpeculative();
+  }
+
+  inline static GAME_ERROR ADDON_SerializeSpeculative(const AddonInstance_Game* instance,
+                                                      uint8_t* data,
+                                                      size_t size)
+  {
+    return static_cast<CInstanceGame*>(instance->toAddon->addonInstance)
+        ->SerializeSpeculative(data, size);
+  }
+
+  inline static GAME_ERROR ADDON_DeserializeSpeculative(const AddonInstance_Game* instance,
+                                                        const uint8_t* data,
+                                                        size_t size)
+  {
+    return static_cast<CInstanceGame*>(instance->toAddon->addonInstance)
+        ->DeserializeSpeculative(data, size);
   }
 
   inline static GAME_ERROR ADDON_Reset(const AddonInstance_Game* instance)
@@ -1970,6 +2084,14 @@ private:
   {
     return static_cast<CInstanceGame*>(instance->toAddon->addonInstance)
         ->RCSetEncoreModeEnabled(enabled);
+  }
+
+  inline static GAME_ERROR ADDON_RCSetAchievementSetEnabled(const AddonInstance_Game* instance,
+                                                            unsigned int setId,
+                                                            bool enabled)
+  {
+    return static_cast<CInstanceGame*>(instance->toAddon->addonInstance)
+        ->RCSetAchievementSetEnabled(setId, enabled);
   }
 
   inline static GAME_ERROR ADDON_ActivateAchievement(const AddonInstance_Game* instance,

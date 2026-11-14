@@ -16,6 +16,7 @@
 #include "gui3d.h"
 #include "rendering/GLExtensions.h"
 #include "rendering/MatrixGL.h"
+#include "rendering/gles/GUIStencilGLES.h"
 #include "rendering/gles/RenderSystemGLES.h"
 #include "settings/AdvancedSettings.h"
 #include "settings/SettingsComponent.h"
@@ -61,9 +62,10 @@ bool CGUIFontTTFGLES::FirstBegin()
 {
   CRenderSystemGLES* renderSystem =
       dynamic_cast<CRenderSystemGLES*>(CServiceBroker::GetRenderSystem());
-  renderSystem->EnableGUIShader(ShaderMethodGLES::SM_FONTS);
-  GLenum pixformat = GL_ALPHA; // deprecated
-  GLenum internalFormat = GL_ALPHA;
+  renderSystem->EnableGUIShader(m_colorTexture ? ShaderMethodGLES::SM_FONTS_RGBA
+                                               : ShaderMethodGLES::SM_FONTS);
+  GLenum pixformat = m_colorTexture ? GL_RGBA : GL_ALPHA;
+  GLenum internalFormat = pixformat;
 
   if (renderSystem->ScissorsCanEffectClipping())
   {
@@ -73,7 +75,8 @@ bool CGUIFontTTFGLES::FirstBegin()
   {
     m_scissorClip = false;
     renderSystem->ResetScissors();
-    renderSystem->EnableGUIShader(ShaderMethodGLES::SM_FONTS_SHADER_CLIP);
+    renderSystem->EnableGUIShader(m_colorTexture ? ShaderMethodGLES::SM_FONTS_RGBA_SHADER_CLIP
+                                                 : ShaderMethodGLES::SM_FONTS_SHADER_CLIP);
   }
 
   if (m_textureStatus == TEXTURE_REALLOCATED)
@@ -127,19 +130,8 @@ bool CGUIFontTTFGLES::FirstBegin()
     m_textureStatus = TEXTURE_READY;
   }
 
-  // Alpha blending assumes linear light. SDR (direct-to-backbuffer or
-  // direct-to-plane) blends in sRGB -- "wrong but consistent", the aesthetic
-  // skins are designed against. HDR FBO compositing draws GUI into an sRGB
-  // FBO that is color-transformed to PQ/HLG before compositing with video
-  // in that non-linear space -- two stages of non-linear blending. The
-  // compensated factors below trade accumulator coverage for a squared-
-  // alpha blend that approximately matches SDR perceived translucency. It
-  // is a "close enough" compromise; a mathematically correct fix would
-  // require linear-light compositing (too expensive on typical ARM GPUs).
-  if (CServiceBroker::GetWinSystem()->IsHdrComposite())
-    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-  else
-    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE_MINUS_DST_ALPHA, GL_ONE);
+  // Accumulate coverage; the HDR composite shader squares it to compensate for blending in PQ/HLG.
+  glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE_MINUS_DST_ALPHA, GL_ONE);
   glEnable(GL_BLEND);
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, m_nTexture);
@@ -158,6 +150,13 @@ void CGUIFontTTFGLES::LastEnd()
 
   CRenderSystemGLES* renderSystem =
       dynamic_cast<CRenderSystemGLES*>(CServiceBroker::GetRenderSystem());
+
+  CGUIStencilGLES stencil;
+  if (!stencil.Clip(winSystem->GetGfxContext().GetStencilLayer()))
+  {
+    renderSystem->DisableGUIShader();
+    return;
+  }
 
   GLint posLoc = renderSystem->GUIShaderGetPos();
   GLint colLoc = renderSystem->GUIShaderGetCol();
@@ -356,7 +355,7 @@ std::unique_ptr<CTexture> CGUIFontTTFGLES::ReallocTexture(unsigned int& newHeigh
   newHeight = CTexture::PadPow2(newHeight);
 
   std::unique_ptr<CTexture> newTexture =
-      CTexture::CreateTexture(m_textureWidth, newHeight, XB_FMT_A8);
+      CTexture::CreateTexture(m_textureWidth, newHeight, m_colorTexture ? XB_FMT_RGBA8 : XB_FMT_A8);
 
   if (!newTexture || !newTexture->GetPixels())
   {
@@ -374,20 +373,11 @@ std::unique_ptr<CTexture> CGUIFontTTFGLES::ReallocTexture(unsigned int& newHeigh
   m_staticCache.Flush();
   m_dynamicCache.Flush();
 
-  memset(newTexture->GetPixels(), 0, m_textureHeight * newTexture->GetPitch());
+  FillNewTexture(*newTexture);
   if (m_texture)
   {
     m_updateY1 = 0;
     m_updateY2 = m_texture->GetHeight();
-
-    unsigned char* src = m_texture->GetPixels();
-    unsigned char* dst = newTexture->GetPixels();
-    for (unsigned int y = 0; y < m_texture->GetHeight(); y++)
-    {
-      memcpy(dst, src, m_texture->GetPitch());
-      src += m_texture->GetPitch();
-      dst += newTexture->GetPitch();
-    }
   }
 
   m_textureStatus = TEXTURE_REALLOCATED;
@@ -395,20 +385,14 @@ std::unique_ptr<CTexture> CGUIFontTTFGLES::ReallocTexture(unsigned int& newHeigh
   return newTexture;
 }
 
-bool CGUIFontTTFGLES::CopyCharToTexture(
-    FT_BitmapGlyph bitGlyph, unsigned int x1, unsigned int y1, unsigned int x2, unsigned int y2)
+bool CGUIFontTTFGLES::CopyCharToTexture(const uint8_t* pixels,
+                                        unsigned int pitch,
+                                        unsigned int x1,
+                                        unsigned int y1,
+                                        unsigned int x2,
+                                        unsigned int y2)
 {
-  FT_Bitmap bitmap = bitGlyph->bitmap;
-
-  unsigned char* source = bitmap.buffer;
-  unsigned char* target = m_texture->GetPixels() + y1 * m_texture->GetPitch() + x1;
-
-  for (unsigned int y = y1; y < y2; y++)
-  {
-    memcpy(target, source, x2 - x1);
-    source += bitmap.width;
-    target += m_texture->GetPitch();
-  }
+  WriteCharPixels(pixels, pitch, x1, y1, x2, y2);
 
   switch (m_textureStatus)
   {

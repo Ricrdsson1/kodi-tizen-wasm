@@ -5,7 +5,8 @@ set_property(TARGET ${APP_NAME_LC} APPEND PROPERTY LINK_DEPENDS
   ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/tizen/tizen_emss.js
   ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/tizen/tizen_drm.js
   ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/player/web_player.js
-  ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/network/tizen_sockets.js)
+  ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/network/tizen_sockets.js
+  ${CMAKE_SOURCE_DIR}/xbmc/cores/VideoPlayer/DVDCodecs/Video/webcodecs_bridge.js)
 if(ENABLE_WASM_DEV_PROXY)
   set_property(TARGET ${APP_NAME_LC} APPEND PROPERTY LINK_DEPENDS
     ${CMAKE_SOURCE_DIR}/tools/wasm/dev_proxy_pre.js)
@@ -183,3 +184,4 @@ ${_static_addon_rows}    {nullptr, nullptr, nullptr, nullptr},
 };
 " @ONLY)
 target_sources(${APP_NAME_LC} PRIVATE "${_static_addon_table}")
+include(${CMAKE_SOURCE_DIR}/cmake/scripts/wasm/TizenTargets.cmake)

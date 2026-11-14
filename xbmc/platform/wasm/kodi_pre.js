@@ -11,17 +11,8 @@
 // main() until IDBFS has finished loading from IndexedDB.
 (function installIdbfsPersistence() {
   var Module = globalThis.Module = globalThis.Module || {};
+  var kodi = (Module.kodi = Module.kodi || {});
   var PROFILE_PATH = '/home/web_user/.kodi';
-
-  // Called once Kodi has shut down: a page cannot end itself, a Tizen app can.
-  function closeApp() {
-    try {
-      tizen.application.getCurrentApplication().exit();
-    } catch (e) {
-      try { window.close(); } catch (e2) {}
-    }
-  }
-  globalThis.kodiQuit = closeApp;
 
   Module.preRun = Module.preRun || [];
   Module.preRun.push(function mountKodiProfile() {
@@ -129,28 +120,25 @@
       return newPath;
     });
 
-    // Debounced background flush to IndexedDB.
+    // Debounced background flush to IndexedDB. A callback runs once a flush
+    // that started after it was queued has finished.
     var syncing = false;
     var pending = false;
-    var closeAfterFlush = false;
-    function flushToIdb() {
+    var waiting = [];
+    function flushToIdb(done) {
+      if (typeof done === 'function') { waiting.push(done); }
       if (syncing) { pending = true; return; }
       syncing = true;
+      var callbacks = waiting;
+      waiting = [];
       FS.syncfs(false, function (err) {
         syncing = false;
         if (err) { console.warn('[kodi] IDBFS persist:', err.name || err, err.message || ''); }
         updateStorageEstimate();
+        callbacks.forEach(function (cb) { cb(); });
         if (pending) { pending = false; flushToIdb(); }
-        else if (closeAfterFlush) closeApp();
       });
     }
-
-    // What Kodi saved while shutting down is stored before the app closes. A flush that
-    // is running already may have missed it, so one more follows it.
-    globalThis.kodiQuit = function () {
-      closeAfterFlush = true;
-      flushToIdb();
-    };
 
     // Block main() until the profile has been loaded from IndexedDB. A flush
     // before then would delete whatever has not been loaded yet.
@@ -165,6 +153,7 @@
         return;
       }
 
+      kodi.flushProfile = flushToIdb;
       setInterval(function () {
         if (dirty) {
           dirty = false;
@@ -191,6 +180,21 @@
 
   var Module = globalThis.Module = globalThis.Module || {};
   var kodi = (Module.kodi = Module.kodi || {});
+
+  // Called once Kodi has shut down. A Tizen app has to close itself, after the
+  // last profile changes are saved.
+  kodi.onExit = function () {
+    function close() {
+      try {
+        if (typeof tizen !== 'undefined' && tizen.application) {
+          tizen.application.getCurrentApplication().exit();
+        }
+      } catch (e) {
+        console.warn('[kodi] closing the app:', e);
+      }
+    }
+    if (typeof kodi.flushProfile === 'function') { kodi.flushProfile(close); } else { close(); }
+  };
 
   var canvas = document.getElementById('canvas');
   if (!canvas) {

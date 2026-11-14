@@ -1055,11 +1055,11 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(VideoPicture* pVideoPicture)
 
   /* XXX: we suppose the screen has a 1.0 pixel ratio */ // CDVDVideo will compensate it.
   pVideoPicture->iDisplayHeight = pVideoPicture->iHeight;
-  pVideoPicture->iDisplayWidth  = ((int)RINT(pVideoPicture->iHeight * aspect_ratio)) & -3;
+  pVideoPicture->iDisplayWidth = static_cast<int>(RINT(pVideoPicture->iHeight * aspect_ratio));
   if (pVideoPicture->iDisplayWidth > pVideoPicture->iWidth)
   {
     pVideoPicture->iDisplayWidth  = pVideoPicture->iWidth;
-    pVideoPicture->iDisplayHeight = ((int)RINT(pVideoPicture->iWidth / aspect_ratio)) & -3;
+    pVideoPicture->iDisplayHeight = static_cast<int>(RINT(pVideoPicture->iWidth / aspect_ratio));
   }
 
 
@@ -1106,11 +1106,14 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(VideoPicture* pVideoPicture)
   const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(pVideoPicture->pixelFormat);
   pVideoPicture->colorBits = desc ? desc->comp[0].depth : 8;
 
+  AVColorRange range = m_hints.colorRange;
   if (m_pCodecContext->color_range == AVCOL_RANGE_JPEG ||
     m_pCodecContext->pix_fmt == AV_PIX_FMT_YUVJ420P)
-    pVideoPicture->color_range = 1;
-  else
-    pVideoPicture->color_range = m_hints.colorRange == AVCOL_RANGE_JPEG ? 1 : 0;
+    range = AVCOL_RANGE_JPEG;
+  else if (range == AVCOL_RANGE_UNSPECIFIED)
+    range = m_pCodecContext->color_range;
+
+  pVideoPicture->color_range = VideoPicture::IsFullRange(range, pVideoPicture->pixelFormat);
 
   //! @todo: ffmpeg doesn't seem like they know how they want to handle this.
   // av_frame_get_qp_table is deprecated but there doesn't seem to be a valid
@@ -1123,6 +1126,25 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(VideoPicture* pVideoPicture)
   pVideoPicture->qscale_type = 0;
 
   pVideoPicture->hdrType = m_hints.hdrType;
+
+#if defined(TARGET_DARWIN_TVOS)
+  // Adaptive manifests may omit HDR signaling even when the decoded HEVC
+  // picture identifies an HDR10/HLG base layer. A Dolby Vision fallback is
+  // valid only when its profile and compatibility ID say so explicitly.
+  if ((pVideoPicture->hdrType == StreamHdrType::HDR_TYPE_NONE ||
+       pVideoPicture->hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION) &&
+      pVideoPicture->color_primaries == AVCOL_PRI_BT2020)
+  {
+    const bool noDolbyVision =
+        pVideoPicture->hdrType == StreamHdrType::HDR_TYPE_NONE && m_hints.dovi.dv_profile == 0;
+    if (pVideoPicture->color_transfer == AVCOL_TRC_SMPTE2084 &&
+        (noDolbyVision || m_hints.HasHDR10DolbyVisionBaseLayer()))
+      pVideoPicture->hdrType = StreamHdrType::HDR_TYPE_HDR10;
+    else if (pVideoPicture->color_transfer == AVCOL_TRC_ARIB_STD_B67 &&
+             (noDolbyVision || m_hints.HasHLGDolbyVisionBaseLayer()))
+      pVideoPicture->hdrType = StreamHdrType::HDR_TYPE_HLG;
+  }
+#endif
 
   AVFrameSideData* sd;
 
@@ -1308,6 +1330,9 @@ int CDVDVideoCodecFFmpeg::FilterOpen(const std::string& filters, bool scale)
     CLog::Log(LOGERROR, "CDVDVideoCodecFFmpeg::FilterOpen - unable to alloc filter graph");
     return -1;
   }
+
+  if (m_decoderState == STATE_SW_SINGLE)
+    m_pFilterGraph->nb_threads = 1;
 
   const AVFilter* srcFilter = avfilter_get_by_name("buffer");
   const AVFilter* outFilter = avfilter_get_by_name("buffersink"); // should be last filter in the graph for now
