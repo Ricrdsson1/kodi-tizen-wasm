@@ -72,6 +72,10 @@ using namespace winrt::Windows::System::Profile;
 #include <sys/param.h>
 #elif defined(TARGET_LINUX)
 #include "platform/linux/SysfsPath.h"
+#if defined(TARGET_TIZEN)
+#include "filesystem/SpecialProtocol.h"
+#include "platform/linux/tizen/SystemInfoTizen.h"
+#endif
 
 #include <linux/version.h>
 #elif defined(TARGET_WASM)
@@ -296,6 +300,13 @@ bool CSysInfoJob::DoWork()
                          CSysInfo::GetKernelName() + " " + CSysInfo::GetKernelVersionFull() + ")";
 #else
   m_info.osVersionInfo     = CSysInfo::GetOsPrettyNameWithVersion() + " (kernel: " + CSysInfo::GetKernelName() + " " + CSysInfo::GetKernelVersionFull() + ")";
+#endif
+#if defined(TARGET_TIZEN)
+  // Which software of the TV, as its version number is not given to apps.
+  const std::string build =
+      KODI::PLATFORM::TIZEN::GetPlatformString("http://tizen.org/system/build.string");
+  if (!build.empty())
+    m_info.osVersionInfo += ", build " + build;
 #endif
   m_info.macAddress        = GetMACAddress();
   m_info.batteryLevel      = GetBatteryLevel();
@@ -567,6 +578,9 @@ bool CSysInfo::GetDiskSpace(std::string drive,int& iTotal, int& iTotalFree, int&
   {
 #if defined(TARGET_WINDOWS)
     drive = "C";
+#elif defined(TARGET_TIZEN)
+    // The system of a TV is read-only; what is free for Kodi is where its profile is.
+    drive = CSpecialProtocol::TranslatePath("special://home");
 #elif defined(TARGET_POSIX)
     drive = "/";
 #endif
@@ -894,6 +908,8 @@ std::string CSysInfo::GetManufacturerName(void)
     g_charsetConverter.wToUTF8(std::wstring(manufacturer.c_str()), manufName);
 #elif defined(TARGET_WASM)
     manufName = KODI::PLATFORM::WASM::CWasmWebApis::GetDeviceInfo().manufacturer;
+#elif defined(TARGET_TIZEN)
+    manufName = KODI::PLATFORM::TIZEN::GetPlatformString("http://tizen.org/system/manufacturer");
 #elif defined(TARGET_LINUX)
 
     auto cpuInfo = CServiceBroker::GetCPUInfo();
@@ -935,6 +951,8 @@ std::string CSysInfo::GetModelName(void)
     g_charsetConverter.wToUTF8(std::wstring(manufacturer.c_str()), modelName);
 #elif defined(TARGET_WASM)
     modelName = KODI::PLATFORM::WASM::CWasmWebApis::GetDeviceInfo().model;
+#elif defined(TARGET_TIZEN)
+    modelName = KODI::PLATFORM::TIZEN::GetPlatformString("http://tizen.org/system/model_name");
 #elif defined(TARGET_LINUX)
     auto cpuInfo = CServiceBroker::GetCPUInfo();
     modelName = cpuInfo->GetCPUHardware();
@@ -1381,6 +1399,11 @@ std::string CSysInfo::GetDeviceName()
   if (StringUtils::EqualsNoCase(friendlyName, CCompileInfo::GetAppName()))
   {
     std::string hostname("[unknown]");
+#if defined(TARGET_TIZEN)
+    // Every app of a TV runs on the host "appzone"; the TV's own name tells TVs apart.
+    hostname = KODI::PLATFORM::TIZEN::GetTVName();
+    if (hostname.empty())
+#endif
     CServiceBroker::GetNetwork().GetHostName(hostname);
     return StringUtils::Format("{} ({})", friendlyName, hostname);
   }
