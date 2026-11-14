@@ -408,7 +408,7 @@ void CMediaPipelineTizen::SetupBitstreamConverter()
 
   auto converter = std::make_unique<CBitstreamConverter>();
   if (converter->Open(m_videoHint.codec, m_videoHint.extradata.GetData(),
-                      static_cast<int>(m_videoHint.extradata.GetSize()), true))
+                      static_cast<int>(m_videoHint.extradata.GetSize())))
     m_bitstream = std::move(converter);
 }
 
