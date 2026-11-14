@@ -22,6 +22,7 @@
 #include "messaging/ApplicationMessenger.h"
 #include "utils/log.h"
 
+#include "platform/linux/tizen/SystemInfoTizen.h"
 #include "platform/wasm/tizen/TizenEMSS.h"
 
 #include <algorithm>
@@ -236,6 +237,9 @@ namespace KODI::WINDOWING::WAYLAND
 
 bool CWinSystemWaylandTizen::InitWindowSystem()
 {
+  // Which software the TV runs, as its version number is not given to apps
+  CLog::Log(LOGINFO, "Tizen: software build {}",
+            KODI::PLATFORM::TIZEN::GetPlatformString("http://tizen.org/system/build.string"));
   if (!CWinSystemWayland::InitWindowSystem())
     return false;
 

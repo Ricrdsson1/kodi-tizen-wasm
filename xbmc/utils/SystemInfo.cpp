@@ -301,13 +301,6 @@ bool CSysInfoJob::DoWork()
 #else
   m_info.osVersionInfo     = CSysInfo::GetOsPrettyNameWithVersion() + " (kernel: " + CSysInfo::GetKernelName() + " " + CSysInfo::GetKernelVersionFull() + ")";
 #endif
-#if defined(TARGET_TIZEN)
-  // Which software of the TV, as its version number is not given to apps.
-  const std::string build =
-      KODI::PLATFORM::TIZEN::GetPlatformString("http://tizen.org/system/build.string");
-  if (!build.empty())
-    m_info.osVersionInfo += ", build " + build;
-#endif
   m_info.macAddress        = GetMACAddress();
   m_info.batteryLevel      = GetBatteryLevel();
   m_info.ipAddress = GetIPAddress();

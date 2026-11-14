@@ -12,6 +12,9 @@
 #include "utils/Temperature.h"
 
 #include "platform/linux/SysfsPath.h"
+#if defined(TARGET_TIZEN)
+#include "platform/linux/tizen/SystemInfoTizen.h"
+#endif
 
 #include <array>
 #include <exception>
@@ -91,6 +94,19 @@ CCPUInfoLinux::CCPUInfoLinux()
   CSysfsPath serialPath{"/sys/bus/soc/devices/soc0/serial_number"};
   if (serialPath.Exists())
     m_cpuSerial = serialPath.Get<std::string>().value_or("");
+
+#if defined(TARGET_TIZEN)
+  // A TV names itself and its chip in its system information.
+  using KODI::PLATFORM::TIZEN::GetPlatformString;
+  const std::string model = GetPlatformString("http://tizen.org/system/model_name");
+  if (!model.empty())
+  {
+    const std::string manufacturer = GetPlatformString("http://tizen.org/system/manufacturer");
+    m_cpuHardware = manufacturer.empty() ? model : manufacturer + " " + model;
+  }
+  if (m_cpuSoC.empty())
+    m_cpuSoC = GetPlatformString("http://tizen.org/system/platform.processor");
+#endif
 
   const std::string freqStr{"/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"};
   CSysfsPath freqPath{freqStr};
