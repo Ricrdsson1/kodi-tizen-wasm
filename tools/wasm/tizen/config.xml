@@ -18,6 +18,8 @@
     <tizen:privilege name="http://developer.samsung.com/privilege/network.public"/>
     <!-- The keyboard of the TV is drawn over the app instead of shrinking it. -->
     <tizen:metadata key="http://samsung.com/tv/metadata/use.conformant" value="floating"/>
+    <!-- Kodi plays local files too; the TV must not refuse to start it offline. -->
+    <tizen:metadata key="http://samsung.com/tv/metadata/use.network" value="false"/>
     <tizen:profile name="tv"/>
     <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable"
                    encryption="disable" install-location="auto" hwkey-event="enable"/>
