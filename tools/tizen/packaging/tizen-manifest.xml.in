@@ -4,6 +4,8 @@
   <ui-application appid="@APP_PACKAGE@" exec="KodiHost.dll" type="dotnet" multiple="false" taskmanage="true" nodisplay="false" launch_mode="single">
     <label>@APP_NAME@</label>
     <icon>kodi.png</icon>
+    <!-- Kodi plays local files too; the TV must not refuse to start it offline. -->
+    <metadata key="http://samsung.com/tv/metadata/use.network" value="false" />
   </ui-application>
   <privileges>
     <privilege>http://tizen.org/privilege/internet</privilege>
