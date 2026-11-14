@@ -138,9 +138,9 @@ foreach(_dir addons media system userdata)
   add_link_options("SHELL:--preload-file ${WASM_PRELOAD_ROOT}/${_dir}@${WASM_VFS_PREFIX}/${_dir}")
 endforeach()
 
-# All of the preloaded data is held in memory, so leave out what cannot be used: the
-# web interface has no web server to serve it (its addon.xml stays, as the add-on is a
-# required one) and the version check has no releases to compare against.
+# All of the preloaded data is held in memory, so leave out what is not worth it: the
+# web interface (its addon.xml stays, as the add-on is a required one), as remotes talk
+# JSON-RPC, and the version check, which has no releases to compare against.
 foreach(_path addons/webinterface.default/themes
               addons/webinterface.default/lib
               addons/webinterface.default/screenshots
@@ -158,6 +158,5 @@ set(ENABLE_OPTICAL OFF CACHE BOOL "No optical drives in browser" FORCE)
 set(ENABLE_DVDCSS OFF CACHE BOOL "libdvdcss disabled for WASM" FORCE)
 set(ENABLE_AIRTUNES OFF CACHE BOOL "AirTunes not available in browser" FORCE)
 set(ENABLE_EVENTCLIENTS OFF CACHE BOOL "Event clients not used for WASM" FORCE)
-set(ENABLE_MICROHTTPD OFF CACHE STRING "A browser cannot accept connections" FORCE)
 set(ENABLE_INTERNAL_FFMPEG ON CACHE BOOL "No system FFmpeg for Emscripten" FORCE)
 

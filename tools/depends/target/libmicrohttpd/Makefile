@@ -11,6 +11,11 @@ CONFIGURE=cp -f $(CONFIG_SUB) $(CONFIG_GUESS) .; \
                       --disable-curl \
                       --enable-https
 
+# Kodi serves plain HTTP on the TV, which spares linking GnuTLS in.
+ifeq ($(OS),wasm)
+  CONFIGURE:=$(subst --enable-https,--disable-https,$(CONFIGURE))
+endif
+
 ifeq ($(DEBUG_BUILD), yes)
   CONFIGURE+= --enable-asserts
 endif
