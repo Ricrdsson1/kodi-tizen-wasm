@@ -681,6 +681,10 @@ void CEsPlayer::Pause()
 void CEsPlayer::SetRate(double rate)
 {
   std::unique_lock lock(m_lock);
+  // VideoPlayer gives the rate with every resume. Setting it on a paused player leaves
+  // the audio silent once it plays on.
+  if (rate == m_rate)
+    return;
   m_rate = rate;
   if (m_player && m_started)
     m_api->set_playback_rate(m_player, rate);
