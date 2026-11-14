@@ -9,6 +9,7 @@
 #include "CPUInfoWasm.h"
 
 #include "SystemInfoWasm.h"
+#include "platform/wasm/WasmWebApis.h"
 #include "utils/StringUtils.h"
 
 #include <cstdlib>
@@ -36,6 +37,20 @@ CCPUInfoWasm::CCPUInfoWasm()
   if (StringUtils::StartsWith(arch, "arm"))
     arch = "ARM" + arch.substr(3);
   m_cpuModel = arch.empty() ? "WebAssembly" : arch;
+
+  const auto device = KODI::PLATFORM::WASM::CWasmWebApis::GetDeviceInfo();
+  if (device.available)
+  {
+    m_cpuHardware = device.manufacturer;
+    if (!device.model.empty())
+    {
+      if (!m_cpuHardware.empty())
+        m_cpuHardware += " ";
+      m_cpuHardware += device.model;
+    }
+    if (!device.firmware.empty())
+      m_cpuHardware += ", firmware " + device.firmware;
+  }
 
   for (int core = 0; core < m_cpuCount; core++)
   {

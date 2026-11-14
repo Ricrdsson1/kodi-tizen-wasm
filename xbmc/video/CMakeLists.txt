@@ -4,10 +4,12 @@ set(SOURCES Bookmark.cpp
             geometry/ContentBarDetector.cpp
             geometry/ContentGeometryCombiner.cpp
             geometry/ContentGeometryRecord.cpp
+            geometry/ContentGeometryScanner.cpp
             geometry/EffectiveGeometry.cpp
             geometry/FrameReduction.cpp
             geometry/FrameSampling.cpp
             geometry/GeometryPublication.cpp
+            geometry/GeometrySettings.cpp
             geometry/GeometryTransforms.cpp
             geometry/LiveGeometrySelector.cpp
             geometry/SampledGeometry.cpp
@@ -17,6 +19,7 @@ set(SOURCES Bookmark.cpp
             SetInfoTag.cpp
             Teletext.cpp
             VideoDatabase.cpp
+            VideoDatabaseContentGeometry.cpp
             VideoDatabaseDDL.cpp
             VideoDatabaseMigration.cpp
             VideoDbUrl.cpp
@@ -26,6 +29,7 @@ set(SOURCES Bookmark.cpp
             VideoInfoDownloader.cpp
             VideoInfoScanner.cpp
             VideoInfoScannerArt.cpp
+            VideoInfoScannerExtras.cpp
             VideoInfoTag.cpp
             VideoItemArtworkHandler.cpp
             VideoLibraryQueue.cpp
@@ -42,10 +46,12 @@ set(HEADERS Bookmark.h
             geometry/ContentBarHistogram.h
             geometry/ContentGeometryCombiner.h
             geometry/ContentGeometryRecord.h
+            geometry/ContentGeometryScanner.h
             geometry/EffectiveGeometry.h
             geometry/FrameReduction.h
             geometry/FrameSampling.h
             geometry/GeometryPublication.h
+            geometry/GeometrySettings.h
             geometry/GeometryTransforms.h
             geometry/LiveGeometrySelector.h
             geometry/SampledGeometry.h
@@ -58,6 +64,7 @@ set(HEADERS Bookmark.h
             VideoDatabase.h
             VideoDatabaseColumns.h
             VideoDatabaseDDL.h
+            VideoDatabaseMigration.h
             VideoDbPaths.h
             VideoDbUrl.h
             VideoEmbeddedImageFileLoader.h
@@ -66,6 +73,7 @@ set(HEADERS Bookmark.h
             VideoInfoDownloader.h
             VideoInfoScanner.h
             VideoInfoScannerArt.h
+            VideoInfoScannerExtras.h
             VideoInfoTag.h
             VideoItemArtworkHandler.h
             VideoLibraryQueue.h

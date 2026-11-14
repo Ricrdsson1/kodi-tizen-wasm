@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "messaging/ApplicationMessenger.h"
 #include "playlists/PlayListTypes.h"
 #include "video/VideoDatabase.h"
 #include "video/VideoThumbLoader.h"
@@ -101,9 +102,27 @@ protected:
    If item has changed then refresh the active underlying list
    \param item the item to lookup
    \param content
+   \param listItemPath path of the list item the information was requested for
    \return true: the information of the item was modified. false: no change.
    */
-  bool ShowInfoAndRefresh(const CFileItemPtr& item, const ADDON::ScraperPtr& content);
+  bool ShowInfoAndRefresh(const CFileItemPtr& item,
+                          const ADDON::ScraperPtr& content,
+                          const std::string& listItemPath);
+
+  /*!
+   \brief Update the list item of a movie in place after its information or art was changed
+   \param listItemPath path of the list item to update
+   \param originalFile file of the movie the change was requested for
+   \param item the changed movie
+   \param infoRefreshed true if the movie was refreshed, false if only its art changed
+   \param listedDetails details of the list item before the information dialog, if infoRefreshed
+   \return true if the list item was updated, false if the list has to be refreshed instead
+   */
+  bool UpdateMovieListItem(const std::string& listItemPath,
+                           const std::string& originalFile,
+                           const CFileItem& item,
+                           bool infoRefreshed,
+                           const CVideoInfoTag* listedDetails);
 
   void OnSearch();
   void OnSearchItemFound(const CFileItem* pSelItem);
@@ -122,22 +141,32 @@ protected:
   CVideoDatabase m_database;
 
   CVideoThumbLoader m_thumbLoader;
+  bool m_restartThumbLoader{false}; //!< stopped for playback, restarted if the window stays active
+  KODI::MESSAGING::ThreadMessageCallback m_restartThumbLoaderCallback{
+      [](void* window) { static_cast<CGUIWindowVideoBase*>(window)->RestartThumbLoader(); }, this};
   bool m_stackingAvailable;
 
 private:
+  void RestartThumbLoader();
+
   enum class ShowInfoResult
   {
     RESULT_ERROR, // some error occurred
     RESULT_OK_UPDATED, // no error, data updated
     RESULT_OK_NOT_UPDATED, // no error, data not updated
+    RESULT_OK_ART_UPDATED, // no error, only the art of the item updated
+    RESULT_OK_INFO_REFRESHED, // no error, item refreshed from its scraper or nfo
   };
 
   /*!
    \brief Lookup the information of an item and display an Info dialog
    \param item the item to lookup
    \param content
+   \param[out] updatedItem the item as last shown by the dialog, set for RESULT_OK_ART_UPDATED
+   and RESULT_OK_INFO_REFRESHED
    \return the result.
    */
   ShowInfoResult ShowInfo(const std::shared_ptr<CFileItem>& item,
-                          const std::shared_ptr<ADDON::CScraper>& content);
+                          const std::shared_ptr<ADDON::CScraper>& content,
+                          std::shared_ptr<CFileItem>& updatedItem);
 };

@@ -27,20 +27,23 @@
 #include "VideoPlayerWebOS.h"
 #endif
 #include "utils/StringUtils.h"
-#include "utils/XBMCTinyXML.h"
+#include "utils/XBMCTinyXML2.h"
 #include "utils/log.h"
 
 #include <utility>
 
 CPlayerCoreConfig::CPlayerCoreConfig(std::string name,
                                      std::string type,
-                                     const TiXmlElement* pConfig,
+                                     const tinyxml2::XMLElement* pConfig,
                                      const std::string& id /* = "" */)
-  : m_name(std::move(name)), m_id(id), m_type(std::move(type))
+  : m_name(std::move(name)),
+    m_id(id),
+    m_type(std::move(type))
 {
   if (pConfig)
   {
-    m_config.reset(static_cast<TiXmlElement*>(pConfig->Clone()));
+    m_config = std::make_unique<CXBMCTinyXML2>();
+    m_config->InsertEndChild(pConfig->DeepClone(m_config.get()));
     const char* sAudio = pConfig->Attribute("audio");
     const char* sVideo = pConfig->Attribute("video");
     m_bPlaysAudio = sAudio && StringUtils::CompareNoCase(sAudio, "true") == 0;
@@ -49,6 +52,8 @@ CPlayerCoreConfig::CPlayerCoreConfig(std::string name,
 
   CLog::Log(LOGDEBUG, "CPlayerCoreConfig::<ctor>: created player {}", m_name);
 }
+
+CPlayerCoreConfig::~CPlayerCoreConfig() = default;
 
 std::shared_ptr<IPlayer> CPlayerCoreConfig::CreatePlayer(IPlayerCallback& callback) const
 {
@@ -98,7 +103,7 @@ std::shared_ptr<IPlayer> CPlayerCoreConfig::CreatePlayer(IPlayerCallback& callba
   player->m_name = m_name;
   player->m_type = m_type;
 
-  if (player->Initialize(m_config.get()))
+  if (player->Initialize(m_config ? m_config->RootElement() : nullptr))
     return player;
 
   return nullptr;

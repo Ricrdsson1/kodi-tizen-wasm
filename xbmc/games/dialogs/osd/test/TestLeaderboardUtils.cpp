@@ -222,6 +222,35 @@ TEST_F(TestLeaderboardUtils, AnIndicatorWithNothingToDrawDoesNotHideOneBehindIt)
   EXPECT_TRUE(silent.GetShownLeaderboardTracker().display.empty());
 }
 
+TEST_F(TestLeaderboardUtils, EveryAttemptCanBeShownInTheOrderItStarted)
+{
+  CAchievementRuntime runtime;
+
+  AchievementChallenge first;
+  first.id = 1;
+  first.title = "Shroom";
+  runtime.SetChallenge(first, true);
+
+  // Nothing to draw, so it takes no place
+  AchievementChallenge nameless;
+  nameless.id = 2;
+  runtime.SetChallenge(nameless, true);
+
+  AchievementChallenge second;
+  second.id = 3;
+  second.title = "Fire Flower";
+  runtime.SetChallenge(second, true);
+
+  EXPECT_EQ(runtime.GetShownChallenge(0).id, 1u);
+  EXPECT_EQ(runtime.GetShownChallenge(1).id, 3u);
+  EXPECT_EQ(runtime.GetShownChallenge(2).id, 0u);
+
+  // One that ends makes room for the next
+  runtime.SetChallenge(first, false);
+  EXPECT_EQ(runtime.GetShownChallenge(0).id, 3u);
+  EXPECT_EQ(runtime.GetShownChallenge(1).id, 0u);
+}
+
 TEST_F(TestLeaderboardUtils, TheClosestToEarnedIsChosenFromWhatCanBeDrawn)
 {
   AchievementProgressIndicator nameless;
@@ -366,6 +395,28 @@ TEST_F(TestLeaderboardUtils, ReadsBackWhatItKept)
   // The player's own row is what the header is composed from, so losing the
   // flag across a save would quietly break "your best"
   EXPECT_TRUE(back[2].isPlayer);
+}
+
+TEST_F(TestLeaderboardUtils, ForgetsStandingsKeptBeforeTheyStartedAtTheTop)
+{
+  // A file without a version holds the rows around the player, not the top
+  const std::string kept =
+      "<gameleaderboards><leaderboard id=\"7\" account=\"Sonikku\" fetched=\"" +
+      std::to_string(std::time(nullptr)) +
+      "\"><entry rank=\"679\" user=\"Sonikku\"/></leaderboard></gameleaderboards>";
+  XFILE::CFile file;
+  ASSERT_TRUE(file.OpenForWrite(CacheFile(), true));
+  file.Write(kept.data(), kept.size());
+  file.Close();
+
+  std::vector<LeaderboardEntry> back;
+  EXPECT_FALSE(LoadLeaderboardEntries(7, "Sonikku", back));
+
+  // Saving replaces that file rather than adding to it
+  SaveLeaderboardEntries(7, "Sonikku", {MakeEntry(1, "Knux", std::time(nullptr))});
+  ASSERT_TRUE(LoadLeaderboardEntries(7, "Sonikku", back));
+  ASSERT_EQ(back.size(), 1u);
+  EXPECT_EQ(back[0].rank, 1u);
 }
 
 TEST_F(TestLeaderboardUtils, KnowsNothingAboutALeaderboardItNeverSaw)

@@ -23,6 +23,7 @@
 #include "settings/Settings.h"
 #include "settings/dialogs/GUIDialogLibExportSettings.h"
 #include "settings/lib/Setting.h"
+#include "settings/lib/SettingDefinitions.h"
 #include "storage/MediaManager.h"
 #include "utils/ContentNames.h"
 #include "utils/StringUtils.h"
@@ -32,6 +33,7 @@
 #include "utils/log.h"
 #include "video/VideoDatabase.h"
 #include "video/VideoLibraryQueue.h"
+#include "video/geometry/ContentGeometryScanner.h"
 
 #include <algorithm>
 #include <array>
@@ -91,8 +93,13 @@ bool CMediaSettings::Load(const TiXmlNode *settings)
       m_defaultVideoSettings.m_Brightness = 50;
     if (!XMLUtils::GetFloat(pElement, "contrast", m_defaultVideoSettings.m_Contrast, 0, 100))
       m_defaultVideoSettings.m_Contrast = 50;
-    if (!XMLUtils::GetFloat(pElement, "gamma", m_defaultVideoSettings.m_Gamma, 0, 100))
-      m_defaultVideoSettings.m_Gamma = 20;
+    if (!XMLUtils::GetFloat(pElement, "hue", m_defaultVideoSettings.m_Hue, 0, 100))
+      m_defaultVideoSettings.m_Hue = 50;
+    if (!XMLUtils::GetFloat(pElement, "saturation", m_defaultVideoSettings.m_Saturation, 0, 100))
+      m_defaultVideoSettings.m_Saturation = 50;
+    // "gamma" held an unused value with a different neutral point
+    if (!XMLUtils::GetFloat(pElement, "gammaadjust", m_defaultVideoSettings.m_Gamma, 0, 100))
+      m_defaultVideoSettings.m_Gamma = 50;
     if (!XMLUtils::GetFloat(pElement, "audiodelay", m_defaultVideoSettings.m_AudioDelay, -10.0f, 10.0f))
       m_defaultVideoSettings.m_AudioDelay = 0.0f;
     if (!XMLUtils::GetFloat(pElement, "subtitledelay", m_defaultVideoSettings.m_SubtitleDelay, -10.0f, 10.0f))
@@ -218,7 +225,9 @@ bool CMediaSettings::Save(TiXmlNode *settings) const
   XMLUtils::SetBoolean(pNode, "showsubtitles", m_defaultVideoSettings.m_SubtitleOn);
   XMLUtils::SetFloat(pNode, "brightness", m_defaultVideoSettings.m_Brightness);
   XMLUtils::SetFloat(pNode, "contrast", m_defaultVideoSettings.m_Contrast);
-  XMLUtils::SetFloat(pNode, "gamma", m_defaultVideoSettings.m_Gamma);
+  XMLUtils::SetFloat(pNode, "hue", m_defaultVideoSettings.m_Hue);
+  XMLUtils::SetFloat(pNode, "saturation", m_defaultVideoSettings.m_Saturation);
+  XMLUtils::SetFloat(pNode, "gammaadjust", m_defaultVideoSettings.m_Gamma);
   XMLUtils::SetFloat(pNode, "audiodelay", m_defaultVideoSettings.m_AudioDelay);
   XMLUtils::SetFloat(pNode, "subtitledelay", m_defaultVideoSettings.m_SubtitleDelay);
   XMLUtils::SetBoolean(pNode, "nonlinstretch", m_defaultVideoSettings.m_CustomNonLinStretch);
@@ -363,10 +372,26 @@ void CMediaSettings::OnSettingAction(const std::shared_ptr<const CSetting>& sett
       videodatabase.Close();
     }
   }
+  else if (settingId == CSettings::SETTING_VIDEOSCREEN_SCANCONTENTGEOMETRY)
+  {
+    KODI::VIDEO::GEOMETRY::CContentGeometryScanner::GetInstance().Sweep(true);
+  }
   else if (settingId == CSettings::SETTING_MAINTENANCE_CLEANIMAGECACHE)
   {
     CServiceBroker::GetTextureCache()->CleanAllUnusedImages();
   }
+}
+
+void CMediaSettings::SettingOptionsImageAdjustmentGranularitiesFiller(
+    const std::shared_ptr<const CSetting>& setting,
+    std::vector<IntegerSettingOption>& list,
+    int& current)
+{
+  static constexpr std::array<std::pair<const char*, int>, 7> GRANULARITIES{
+      {{"1.0", 100}, {"0.5", 50}, {"0.2", 20}, {"0.1", 10}, {"0.05", 5}, {"0.02", 2}, {"0.01", 1}}};
+
+  for (const auto& [label, value] : GRANULARITIES)
+    list.emplace_back(label, value);
 }
 
 void CMediaSettings::OnSettingChanged(const std::shared_ptr<const CSetting>& setting)
@@ -374,8 +399,18 @@ void CMediaSettings::OnSettingChanged(const std::shared_ptr<const CSetting>& set
   if (!setting)
     return;
 
-  if (setting->GetId() == CSettings::SETTING_VIDEOLIBRARY_SHOWUNWATCHEDPLOTS)
+  const std::string& settingId{setting->GetId()};
+  if (settingId == CSettings::SETTING_VIDEOLIBRARY_SHOWUNWATCHEDPLOTS)
     CServiceBroker::GetAnnouncementManager()->Announce(ANNOUNCEMENT::VideoLibrary, "OnRefresh");
+  else if (settingId == CSettings::SETTING_VIDEOSCREEN_EXTRACTCONTENTGEOMETRY ||
+           settingId == CSettings::SETTING_VIDEOSCREEN_CONTENTGEOMETRYONSCAN)
+  {
+    auto& scanner{KODI::VIDEO::GEOMETRY::CContentGeometryScanner::GetInstance()};
+    if (std::static_pointer_cast<const CSettingBool>(setting)->GetValue())
+      scanner.Sweep();
+    else
+      scanner.StopSweep();
+  }
 }
 
 WatchedMode CMediaSettings::GetWatchedMode(const std::string& content) const

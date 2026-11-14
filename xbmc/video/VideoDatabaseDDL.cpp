@@ -31,11 +31,16 @@ void CVideoDatabaseDDL::InitializeVideoVersionTypeTable(CDatabase& db)
       // Exclude removed pre-populated "quality" values
       if (id == 40405 || (id >= 40418 && id <= 40430))
         continue;
+      if (id >= VIDEO_EXTRA_NAME_ID_BEGIN && id <= VIDEO_EXTRA_NAME_ID_END)
+        continue;
 
+      const VideoAssetType assetType{id >= VIDEO_EXTRA_ID_BEGIN && id <= VIDEO_EXTRA_ID_END
+                                         ? VideoAssetType::EXTRA
+                                         : VideoAssetType::VERSION};
       const std::string& type{CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(id)};
       db.ExecuteQuery(db.PrepareSQL(
           "INSERT INTO videoversiontype (id, name, owner, itemType) VALUES(%i, '%s', %i, %i)", id,
-          type.c_str(), VideoAssetTypeOwner::SYSTEM, VideoAssetType::VERSION));
+          type.c_str(), VideoAssetTypeOwner::SYSTEM, assetType));
     }
   }
   catch (...)
@@ -63,7 +68,9 @@ void CVideoDatabaseDDL::CreateTables(CDatabase& db)
       "Sharpness float, NoiseReduction float, NonLinStretch bool, PostProcess bool,"
       "ScalingMethod integer, DeinterlaceMode integer, StereoMode integer, StereoInvert bool, "
       "VideoStream integer,"
-      "TonemapMethod integer, TonemapParam float, Orientation integer, CenterMixLevel integer)\n");
+      "TonemapMethod integer, TonemapParam float, Orientation integer, CenterMixLevel integer, "
+      "Hue float, Saturation float,"
+      "DeclaredAspect float, DeclaredOn text, DetectedWhenDeclared float)\n");
 
   CLog::Log(LOGINFO, "create stacktimes table");
   db.ExecuteQuery("CREATE TABLE stacktimes (idFile integer, times text)\n");
@@ -198,6 +205,16 @@ void CVideoDatabaseDDL::CreateTables(CDatabase& db)
   db.ExecuteQuery(
       "CREATE TABLE videoversion (idFile INTEGER PRIMARY KEY, idMedia INTEGER, media_type "
       "TEXT, itemType INTEGER, idType INTEGER)");
+
+  CreateContentGeometryTable(db);
+}
+
+void CVideoDatabaseDDL::CreateContentGeometryTable(CDatabase& db)
+{
+  CLog::Log(LOGINFO, "create contentgeometry table");
+
+  db.ExecuteQuery("CREATE TABLE contentgeometry (idFile INTEGER PRIMARY KEY, aspects TEXT, "
+                  "algorithmVersion INTEGER, fileSize BIGINT, fileMTime BIGINT)");
 }
 
 void CVideoDatabaseDDL::CreateLinkIndex(CDatabase& db, const std::string& table)
@@ -374,13 +391,22 @@ void CVideoDatabaseDDL::CreateTriggers(CDatabase& db)
                   "DELETE FROM stacktimes WHERE idFile=old.idFile; "
                   "DELETE FROM streamdetails WHERE idFile=old.idFile; "
                   "DELETE FROM videoversion WHERE idFile=old.idFile; "
+                  "DELETE FROM contentgeometry WHERE idFile=old.idFile; "
                   "DELETE FROM art WHERE media_id=old.idFile AND media_type='videoversion'; "
                   "END");
+  // The type of an extra other than a built-in one is the name of one extra, so goes with it
+  const std::string deleteUnusedExtraType{db.PrepareSQL(
+      "DELETE FROM videoversiontype WHERE id=old.idType AND itemType=%i AND owner<>%i "
+      "AND id NOT IN (SELECT idType FROM videoversion); ",
+      VideoAssetType::EXTRA, VideoAssetTypeOwner::SYSTEM)};
   db.ExecuteQuery(
       "CREATE TRIGGER delete_videoversion AFTER DELETE ON videoversion FOR EACH ROW BEGIN "
       "DELETE FROM art WHERE media_id=old.idFile AND media_type='videoversion'; "
-      "DELETE FROM streamdetails WHERE idFile=old.idFile; "
-      "END");
+      "DELETE FROM streamdetails WHERE idFile=old.idFile; " +
+      deleteUnusedExtraType + "END");
+  db.ExecuteQuery("CREATE TRIGGER update_videoversion AFTER UPDATE ON videoversion FOR EACH ROW "
+                  "BEGIN " +
+                  deleteUnusedExtraType + "END");
 }
 
 /*!

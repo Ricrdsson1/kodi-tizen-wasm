@@ -662,7 +662,9 @@ fi
 
 case $build in
   *darwin*)
-    LDFLAGS=$(echo "$LDFLAGS" | sed "s|$platform_includes||")
+    if test -n "$platform_includes"; then
+      LDFLAGS=$(echo "$LDFLAGS" | sed "s|$platform_includes||")
+    fi
 esac
 
 if test "$ac_cv_search_iconv_open" != "none required"; then
@@ -875,14 +877,17 @@ AC_SUBST(app_rendersystem)
 AC_SUBST(ffmpeg_options)
 
 [
-if test "x$CCACHE" = "x"
-then
-  MESON_CC="'$CC'"
-  MESON_CXX="'$CXX'"
-else
-  MESON_CC="['$CCACHE', '$CC']"
-  MESON_CXX="['$CCACHE', '$CXX']"
-fi
+MESON_CC="${CCACHE:+'$CCACHE'}"
+for arg in $CC; do
+  MESON_CC="${MESON_CC:+${MESON_CC}, }'$arg'"
+done
+MESON_CC="[$MESON_CC]"
+
+MESON_CXX="${CCACHE:+'$CCACHE'}"
+for arg in $CXX; do
+  MESON_CXX="${MESON_CXX:+${MESON_CXX}, }'$arg'"
+done
+MESON_CXX="[$MESON_CXX]"
 
 # Parse and handle CFLAGS
 read -r CFLAGS_ARRAY << EOF

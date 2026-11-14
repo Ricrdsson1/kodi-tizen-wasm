@@ -15,8 +15,8 @@
 #include "TextureCacheJob.h"
 #include "ThumbLoader.h"
 #include "Util.h"
-#include "cores/VideoPlayer/DVDFileInfo.h"
 #include "filesystem/Directory.h"
+#include "filesystem/File.h"
 #include "imagefiles/ImageFileURL.h"
 #include "jobs/Job.h"
 #include "jobs/JobManager.h"
@@ -32,6 +32,7 @@
 #include "utils/log.h"
 #include "video/VideoInfoScanner.h"
 #include "video/VideoInfoTag.h"
+#include "video/VideoManagerTypes.h"
 #include "video/VideoThumbLoader.h"
 
 #include <algorithm>
@@ -66,7 +67,10 @@ void CacheArtwork(const std::string& url,
   }
 
   bool needsRecaching{false};
-  if (!textureCache->CheckCachedImage(url, needsRecaching).empty() && !needsRecaching)
+  const std::string cachedImage{textureCache->CheckCachedImage(url, needsRecaching)};
+  // A cached copy whose file has gone is cached again. An image that is its own copy is not
+  if (!cachedImage.empty() && !needsRecaching &&
+      (cachedImage == IMAGE_FILES::ToCacheKey(url) || CFile::Exists(cachedImage)))
     return; // already cached
 
   // Fetch art or recache as needed
@@ -303,24 +307,57 @@ void CVideoInfoScannerArt::GetArtwork(CFileItem* pItem,
       useFolder = false;
 
       std::string path;
+      bool isInFolder{bApplyToDir};
+      const int playlist{pItem->GetProperty(ITEM::PROPERTY::BLURAY_PLAYLIST).asInteger32(-1)};
       if (content == ContentType::TVSHOWS)
       {
+        const bool multipleEpisodes{pItem->GetProperty(MULTIPLE_EPISODES).asBoolean(false)};
         path = ART::GetLocalArtBaseFilename(*pItem, useFolder,
-                                            pItem->GetProperty(MULTIPLE_EPISODES).asBoolean(false)
+                                            multipleEpisodes
                                                 ? ART::AdditionalIdentifiers::SEASON_AND_EPISODE
                                                 : ART::AdditionalIdentifiers::NONE);
+        // The plain art beside a disc of several episodes can't say which episode it is for, but
+        // art named by the episode alone (S01E01-thumb.jpg) can, with index-S01E01- winning
+        if (multipleEpisodes && URIUtils::HasExtension(path, ".bdmv|.ifo"))
+        {
+          const CVideoInfoTag& tag{*pItem->GetVideoInfoTag()};
+          ART::AddLocalItemArtwork(
+              art, artTypes,
+              URIUtils::AddFileToFolder(URIUtils::GetDirectory(path),
+                                        StringUtils::Format("S{:02}E{:02}{}", tag.m_iSeason,
+                                                            tag.m_iEpisode,
+                                                            URIUtils::GetExtension(path))),
+              addAll, exactName, false);
+          isInFolder = false;
+        }
       }
       else if (content == ContentType::MOVIE_VERSIONS ||
-               (pItem->HasVideoVersions() &&
-                pItem->GetProperty(ITEM::PROPERTY::BLURAY_PLAYLIST).asInteger32(-1) > -1))
+               (pItem->HasVideoVersions() && playlist > -1))
       {
         // Add playlist identifier only when there are multiple versions of the movie on the same disc
         path =
             ART::GetLocalArtBaseFilename(*pItem, useFolder, ART::AdditionalIdentifiers::PLAYLIST);
+        if (playlist > -1)
+        {
+          // Each pass overrides the last, so the version's own art wins over plain folder art.
+          // Only a disc folder rip (index-00800.bdmv) has a folder to itself. An extra of the
+          // movie, such as a featurette, shows only its own art, as the plain art is the movie's.
+          const std::string directory{URIUtils::GetDirectory(path)};
+          const bool isDiscFolder{URIUtils::HasExtension(path, ".bdmv")};
+          const bool isExtra{movieDetails.GetAssetInfo().GetType() == VideoAssetType::EXTRA};
+          if (!isExtra && (bApplyToDir || isDiscFolder))
+            ART::AddLocalItemArtwork(art, artTypes, directory, addAll, exactName, true);
+          if (isDiscFolder)
+            ART::AddLocalItemArtwork(
+                art, artTypes,
+                URIUtils::AddFileToFolder(directory, StringUtils::Format("{:05}.bdmv", playlist)),
+                addAll, exactName, false);
+          isInFolder = false;
+        }
       }
       else
         path = ART::GetLocalArtBaseFilename(*pItem, useFolder);
-      ART::AddLocalItemArtwork(art, artTypes, path, addAll, exactName, bApplyToDir);
+      ART::AddLocalItemArtwork(art, artTypes, path, addAll, exactName, isInFolder);
     }
 
     if (moviePartOfSet)
@@ -387,7 +424,7 @@ void CVideoInfoScannerArt::GetArtwork(CFileItem* pItem,
   if (!art.contains(ART::TYPE::THUMB) &&
       CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
           CSettings::SETTING_MYVIDEOS_EXTRACTTHUMB) &&
-      CDVDFileInfo::CanExtract(mediaItem ? *mediaItem : *pItem))
+      CVideoThumbLoader::CanExtractEmbeddedThumb(mediaItem ? *mediaItem : *pItem))
   {
     art[ART::TYPE::THUMB] = CVideoThumbLoader::GetEmbeddedThumbURL(mediaItem ? *mediaItem : *pItem);
   }
@@ -400,8 +437,10 @@ void CVideoInfoScannerArt::GetArtwork(CFileItem* pItem,
 
   pItem->SetArt(art);
 
-  // parent folder to apply the thumb to and to search for local actor thumbs
-  std::string parentDir = URIUtils::GetParentPath(pItem->GetPath());
+  // parent folder to apply the thumb to and to search for local actor thumbs - a folder item (a tv
+  // show) is its own
+  const std::string parentDir{pItem->IsFolder() ? pItem->GetPath()
+                                                : URIUtils::GetParentPath(pItem->GetPath())};
   if (CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
           CSettings::SETTING_VIDEOLIBRARY_ACTORTHUMBS))
   {

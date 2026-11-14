@@ -14,6 +14,7 @@
 #include "threads/CriticalSection.h"
 #include "windowing/GraphicContext.h" // needed for the RESOLUTION members
 
+#include <cstddef>
 #include <map>
 #include <memory>
 #include <set>
@@ -169,6 +170,9 @@ public:
 
   float GetEffectsSlowdown() const { return m_effectsSlowDown; }
 
+  const std::string& GetSurroundColour() const { return m_surroundColour; }
+  const std::string& GetSurroundImage() const { return m_surroundImage; }
+
   const std::vector<CStartupWindow>& GetStartupWindows() const { return m_startupWindows; }
 
   /*! \brief Retrieve the skin paths to search for skin XML files
@@ -179,6 +183,11 @@ public:
   bool IsInUse() const override;
 
   const std::string& GetCurrentAspect() const { return m_currentAspect; }
+
+  /*! \brief Check if the screen now matches another skin resolution than the
+   one the skin was loaded for, e.g. after switching from 4:3 to 16:9
+   */
+  bool IsResolutionChanged() const;
 
   void LoadIncludes();
 
@@ -291,9 +300,12 @@ protected:
   float m_effectsSlowDown;
   CGUIIncludes m_includes;
   std::string m_currentAspect;
+  std::ptrdiff_t m_currentResolution{-1}; // index in m_resolutions
 
   std::vector<CStartupWindow> m_startupWindows;
   bool m_debugging;
+  std::string m_surroundColour;
+  std::string m_surroundImage;
 
   /*! Manager/Owner of skin timers */
   std::unique_ptr<CSkinTimerManager> m_skinTimerManager;

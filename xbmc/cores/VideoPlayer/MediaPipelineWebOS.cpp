@@ -274,12 +274,21 @@ std::string CMediaPipelineWebOS::GetVideoInfo() const
                      mbps, fps, m_droppedFrames);
 }
 
-bool CMediaPipelineWebOS::Supports(const AVCodecID codec, const int profile)
+bool CMediaPipelineWebOS::Supports(const CDVDStreamInfo& hint)
 {
-  if ((codec == AV_CODEC_ID_H264 || codec == AV_CODEC_ID_AVS || codec == AV_CODEC_ID_CAVS) &&
-      profile == AV_PROFILE_H264_HIGH_10)
+  if ((hint.codec == AV_CODEC_ID_H264 || hint.codec == AV_CODEC_ID_AVS ||
+       hint.codec == AV_CODEC_ID_CAVS) &&
+      hint.profile == AV_PROFILE_H264_HIGH_10)
     return false;
-  return ms_codecMap.contains(codec);
+
+  // Starfish is configured from channels, profile and sample rate only; the sample rate can be
+  // recovered from extradata. Realtime streams skip stream probing, so these can be unknown.
+  if ((hint.codec == AV_CODEC_ID_AAC || hint.codec == AV_CODEC_ID_AAC_LATM) &&
+      (!hint.channels || hint.profile == AV_PROFILE_UNKNOWN ||
+       (!hint.samplerate && !hint.extradata)))
+    return false;
+
+  return ms_codecMap.contains(hint.codec);
 }
 
 void CMediaPipelineWebOS::AcbCallback(
@@ -331,7 +340,7 @@ bool CMediaPipelineWebOS::OpenAudioStream(CDVDStreamInfo& audioHint)
       m_processInfo.SetAudioChannels(CAEUtil::GetAEChannelLayout(audioHint.channellayout));
       m_processInfo.SetAudioSampleRate(audioHint.samplerate);
       m_processInfo.SetAudioBitsPerSample(audioHint.bitspersample);
-      if (Supports(audioHint.codec, audioHint.profile))
+      if (Supports(audioHint))
         m_processInfo.SetAudioDecoderName("starfish-" +
                                           std::string(ms_codecMap.at(audioHint.codec).data()));
       else if (m_audioEncoder)
@@ -357,7 +366,7 @@ bool CMediaPipelineWebOS::OpenAudioStream(CDVDStreamInfo& audioHint)
 
 bool CMediaPipelineWebOS::OpenVideoStream(CDVDStreamInfo hint)
 {
-  if (!Supports(hint.codec, hint.profile))
+  if (!Supports(hint))
   {
     CLog::LogF(LOGERROR, "Unsupported codec: {}", hint.codec);
     return false;
@@ -377,17 +386,18 @@ bool CMediaPipelineWebOS::OpenVideoStream(CDVDStreamInfo hint)
       m_processInfo.SetVideoInterlaced(hint.interlaced);
       m_processInfo.SetVideoDimensions(hint.width, hint.height);
       m_processInfo.SetVideoDAR(static_cast<float>(hint.aspect));
+      double fps = 0.0;
       if (m_videoHint.fpsrate && m_videoHint.fpsscale)
       {
-        m_processInfo.SetVideoFps(static_cast<float>(hint.fpsrate) /
-                                  static_cast<float>(hint.fpsscale));
+        fps = static_cast<double>(hint.fpsrate) / static_cast<double>(hint.fpsscale);
+        m_processInfo.SetVideoFps(static_cast<float>(fps));
       }
       else
       {
         m_processInfo.SetVideoFps(1.0);
       }
 
-      return true;
+      return ConfigureRenderer(hint, fps);
     }
 
     // Different codec => unload the current stream
@@ -762,6 +772,60 @@ bool CMediaPipelineWebOS::Load(CDVDStreamInfo videoHint, CDVDStreamInfo audioHin
     m_clock.UpdateFramerate(fps);
     m_picture.iDuration = 1000.0 / fps;
   }
+  if (!ConfigureRenderer(videoHint, fps))
+    return false;
+
+  std::unique_lock lock(m_eventMutex);
+  if (!m_eventCondition.wait_for(lock, 1s, [this] { return m_loaded == true; }))
+  {
+    CLog::LogF(LOGERROR, "Pipeline did not load");
+    m_messageQueueParent.Put(std::make_shared<CDVDMsg>(CDVDMsg::PLAYER_ABORT));
+    return false;
+  }
+
+  m_droppedFrames = 0;
+  std::string formatName = fmt::format(
+      "starfish-{}{}", videoHint.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION ? "d" : "",
+      StringUtils::ToLower(ms_codecMap.at(videoHint.codec)));
+  m_processInfo.SetVideoDecoderName(formatName, true);
+  m_processInfo.SetVideoPixelFormat("Surface");
+  m_processInfo.SetVideoDimensions(videoHint.width, videoHint.height);
+  m_processInfo.SetVideoInterlaced(videoHint.interlaced);
+  m_processInfo.SetVideoDeintMethod("hardware");
+  m_processInfo.SetVideoDAR(static_cast<float>(videoHint.aspect));
+  m_processInfo.SetVideoFps(static_cast<float>(fps));
+  if (audioHint.codec != AV_CODEC_ID_NONE)
+  {
+    if (audioHint.channellayout)
+      m_processInfo.SetAudioChannels(CAEUtil::GetAEChannelLayout(audioHint.channellayout));
+    else
+      m_processInfo.SetAudioChannels(CAEUtil::GuessChLayout(audioHint.channels));
+    m_processInfo.SetAudioSampleRate(audioHint.samplerate);
+    m_processInfo.SetAudioBitsPerSample(audioHint.bitspersample);
+    if (Supports(audioHint))
+      m_processInfo.SetAudioDecoderName(std::string("starfish-") +
+                                        ms_codecMap.at(audioHint.codec).data());
+    else if (m_audioEncoder)
+    {
+      m_processInfo.SetAudioDecoderName((m_audioEncoder->GetCodecID() == AV_CODEC_ID_EAC3)
+                                            ? "starfish-EAC3 (transcoding)"
+                                            : "starfish-AC3 (transcoding)");
+    }
+  }
+
+  m_fedAudioPts = NO_PTS;
+  m_fedVideoPts = NO_PTS;
+  m_started = false;
+
+  m_videoClosed = false;
+  if (m_hasAudio)
+    m_audioClosed = false;
+  m_renderManager.ShowVideo(true);
+  return true;
+}
+
+bool CMediaPipelineWebOS::ConfigureRenderer(const CDVDStreamInfo& videoHint, const double fps)
+{
   m_picture.iWidth = videoHint.width;
   m_picture.iHeight = videoHint.height;
   m_picture.iDisplayWidth = videoHint.width;
@@ -791,53 +855,6 @@ bool CMediaPipelineWebOS::Load(CDVDStreamInfo videoHint, CDVDStreamInfo audioHin
     m_messageQueueParent.Put(std::make_shared<CDVDMsg>(CDVDMsg::PLAYER_ABORT));
     return false;
   }
-
-  std::unique_lock lock(m_eventMutex);
-  if (!m_eventCondition.wait_for(lock, 1s, [this] { return m_loaded == true; }))
-  {
-    CLog::LogF(LOGERROR, "Pipeline did not load");
-    m_messageQueueParent.Put(std::make_shared<CDVDMsg>(CDVDMsg::PLAYER_ABORT));
-    return false;
-  }
-
-  m_droppedFrames = 0;
-  std::string formatName = fmt::format(
-      "starfish-{}{}", videoHint.hdrType == StreamHdrType::HDR_TYPE_DOLBYVISION ? "d" : "",
-      StringUtils::ToLower(ms_codecMap.at(videoHint.codec)));
-  m_processInfo.SetVideoDecoderName(formatName, true);
-  m_processInfo.SetVideoPixelFormat("Surface");
-  m_processInfo.SetVideoDimensions(videoHint.width, videoHint.height);
-  m_processInfo.SetVideoInterlaced(videoHint.interlaced);
-  m_processInfo.SetVideoDeintMethod("hardware");
-  m_processInfo.SetVideoDAR(static_cast<float>(videoHint.aspect));
-  m_processInfo.SetVideoFps(static_cast<float>(fps));
-  if (audioHint.codec != AV_CODEC_ID_NONE)
-  {
-    if (audioHint.channellayout)
-      m_processInfo.SetAudioChannels(CAEUtil::GetAEChannelLayout(audioHint.channellayout));
-    else
-      m_processInfo.SetAudioChannels(CAEUtil::GuessChLayout(audioHint.channels));
-    m_processInfo.SetAudioSampleRate(audioHint.samplerate);
-    m_processInfo.SetAudioBitsPerSample(audioHint.bitspersample);
-    if (Supports(audioHint.codec, audioHint.profile))
-      m_processInfo.SetAudioDecoderName(std::string("starfish-") +
-                                        ms_codecMap.at(audioHint.codec).data());
-    else if (m_audioEncoder)
-    {
-      m_processInfo.SetAudioDecoderName((m_audioEncoder->GetCodecID() == AV_CODEC_ID_EAC3)
-                                            ? "starfish-EAC3 (transcoding)"
-                                            : "starfish-AC3 (transcoding)");
-    }
-  }
-
-  m_fedAudioPts = NO_PTS;
-  m_fedVideoPts = NO_PTS;
-  m_started = false;
-
-  m_videoClosed = false;
-  if (m_hasAudio)
-    m_audioClosed = false;
-  m_renderManager.ShowVideo(true);
   return true;
 }
 
@@ -884,7 +901,7 @@ std::string CMediaPipelineWebOS::SetupAudio(CDVDStreamInfo& audioHint, CVariant&
   const bool allowPassthrough = CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
                                     CSettings::SETTING_AUDIOOUTPUT_PASSTHROUGH) ||
                                 audioHint.cryptoSession;
-  const bool supported = Supports(audioHint.codec, audioHint.profile);
+  const bool supported = Supports(audioHint);
 
   if (!supported && audioHint.cryptoSession)
   {
@@ -984,7 +1001,7 @@ void CMediaPipelineWebOS::SetupBitstreamConverter(CDVDStreamInfo& hint)
     {
       m_bitstream = std::make_unique<CBitstreamConverter>();
       if (m_bitstream->Open(hint.codec, hint.extradata.GetData(),
-                            static_cast<int>(hint.extradata.GetSize()), true))
+                            static_cast<int>(hint.extradata.GetSize())))
       {
         if (hint.codec == AV_CODEC_ID_HEVC)
         {

@@ -42,6 +42,7 @@
 #include "playlists/PlayList.h"
 #include "playlists/PlayListFactory.h"
 #include "playlists/PlayListFileItemClassify.h"
+#include "playlists/SmartPlayList.h"
 #include "profiles/ProfileManager.h"
 #include "resources/LocalizeStrings.h"
 #include "resources/ResourcesComponent.h"
@@ -51,6 +52,7 @@
 #include "settings/dialogs/GUIDialogContentSettings.h"
 #include "storage/MediaManager.h"
 #include "utils/ArtTypes.h"
+#include "utils/ArtUtils.h"
 #include "utils/ContentNames.h"
 #include "utils/DefaultArt.h"
 #include "utils/DiscsUtils.h"
@@ -77,8 +79,10 @@
 #include "video/guilib/VideoSelectActionProcessor.h"
 #include "view/GUIViewState.h"
 
+#include <algorithm>
 #include <map>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <string>
 #include <unordered_map>
@@ -138,6 +142,7 @@ bool CGUIWindowVideoBase::OnMessage(CGUIMessage& message)
   switch ( message.GetMessage() )
   {
   case GUI_MSG_WINDOW_DEINIT:
+    m_restartThumbLoader = false;
     if (m_thumbLoader.IsLoading())
       m_thumbLoader.StopThread();
     m_database.Close();
@@ -224,9 +229,40 @@ bool CGUIWindowVideoBase::OnMessage(CGUIMessage& message)
       }
     }
     break;
-  case GUI_MSG_SEARCH:
-    OnSearch();
-    break;
+    case GUI_MSG_NOTIFY_ALL:
+      if (message.GetParam1() == GUI_MSG_UPDATE_ITEM && message.GetItem())
+      {
+        const auto newItem{std::static_pointer_cast<CFileItem>(message.GetItem())};
+        // the item that CFileItemList::UpdateItem() updates
+        const auto it{std::ranges::find_if(*m_vecItems, [&newItem](const auto& item)
+                                           { return item->IsSamePath(newItem.get()); })};
+        const std::shared_ptr<CFileItem> listItem{it != m_vecItems->end() ? *it : nullptr};
+        const CBackgroundInfoLoader::CItemHold itemHold{m_thumbLoader, listItem.get()};
+        return CGUIMediaWindow::OnMessage(message);
+      }
+      break;
+    case GUI_MSG_PLAYBACK_AVSTARTED:
+    {
+      // queued after the player's switch to fullscreen, which deinitializes the window. External
+      // players do not switch, the loader restarts once they stop.
+      const auto appPlayer{CServiceBroker::GetAppComponents().GetComponent<CApplicationPlayer>()};
+      if (m_restartThumbLoader && !appPlayer->IsExternalPlaying())
+        CServiceBroker::GetAppMessenger()->PostMsg(TMSG_CALLBACK, -1, -1,
+                                                   &m_restartThumbLoaderCallback);
+      break;
+    }
+    case GUI_MSG_PLAYBACK_ERROR:
+    case GUI_MSG_PLAYBACK_STOPPED:
+    case GUI_MSG_PLAYBACK_ENDED:
+    {
+      const auto appPlayer{CServiceBroker::GetAppComponents().GetComponent<CApplicationPlayer>()};
+      if (!appPlayer->IsPlaying() && !appPlayer->HasNextItem())
+        RestartThumbLoader();
+      break;
+    }
+    case GUI_MSG_SEARCH:
+      OnSearch();
+      break;
   }
   return CGUIMediaWindow::OnMessage(message);
 }
@@ -237,6 +273,9 @@ bool CGUIWindowVideoBase::OnItemInfo(const CFileItem& fileItem)
       fileItem.IsPath(ITEM::PLACEHOLDER::ADD_SOURCE) ||
       (PLAYLIST::IsPlayList(fileItem) && !URIUtils::HasExtension(fileItem.GetDynPath(), ".strm")))
     return false;
+
+  // the item may be one of the list, which the loader thread writes
+  const CBackgroundInfoLoader::CItemHold itemHold{m_thumbLoader, &fileItem};
 
   // "Videos/Video Add-ons" lists addons in the video window
   if (fileItem.HasAddonInfo())
@@ -253,7 +292,7 @@ bool CGUIWindowVideoBase::OnItemInfo(const CFileItem& fileItem)
   // Movie set
   if (fileItem.IsFolder() && VIDEO::IsVideoDb(fileItem) &&
       fileItem.GetVideoContentType() == VideoDbContentType::MOVIE_SETS)
-    return ShowInfoAndRefresh(std::make_shared<CFileItem>(fileItem), nullptr);
+    return ShowInfoAndRefresh(std::make_shared<CFileItem>(fileItem), nullptr, fileItem.GetPath());
 
   // Music video. Match visibility test of CMusicInfo::IsVisible
   if (VIDEO::IsVideoDb(fileItem) && fileItem.HasVideoInfoTag() &&
@@ -353,7 +392,7 @@ bool CGUIWindowVideoBase::OnItemInfo(const CFileItem& fileItem)
   if (fileItem.IsFolder())
     item.SetProperty(ITEM::PROPERTY::SET_FOLDER_THUMB, fileItem.GetPath());
 
-  return ShowInfoAndRefresh(std::make_shared<CFileItem>(item), scraper);
+  return ShowInfoAndRefresh(std::make_shared<CFileItem>(item), scraper, fileItem.GetPath());
 }
 
 // ShowInfo is called as follows:
@@ -378,7 +417,9 @@ bool CGUIWindowVideoBase::OnItemInfo(const CFileItem& fileItem)
 // 6.  Check for a refresh, and if so, go to 3.
 
 CGUIWindowVideoBase::ShowInfoResult CGUIWindowVideoBase::ShowInfo(
-    const std::shared_ptr<CFileItem>& item2, const std::shared_ptr<ADDON::CScraper>& info2)
+    const std::shared_ptr<CFileItem>& item2,
+    const std::shared_ptr<ADDON::CScraper>& info2,
+    std::shared_ptr<CFileItem>& updatedItem)
 {
   using enum CGUIWindowVideoBase::ShowInfoResult;
 
@@ -459,18 +500,30 @@ CGUIWindowVideoBase::ShowInfoResult CGUIWindowVideoBase::ShowInfo(
                               item->GetVideoContentType() == VideoDbContentType::MOVIE_SETS);
 
   bool needsRefresh = false;
+  // changes made in the dialog before a refresh, which may fail or not run at all
+  bool hasChanges = false;
+  // collected over all openings of the dialog
+  bool hasUpdatedItems = false;
   if (bHasInfo)
   {
     item->SetProperty(ITEM::PROPERTY::CHECK_AUTOPLAY_NEXT_ITEM, IsActive());
     *item->GetVideoInfoTag() = movieDetails;
     pDlgInfo->SetMovie(item.get());
     pDlgInfo->Open();
-    if (pDlgInfo->HasUpdatedUserrating())
-      return RESULT_OK_UPDATED;
+    hasChanges = pDlgInfo->HasUpdatedUserrating() || pDlgInfo->HasUpdatedThumb() ||
+                 pDlgInfo->HasUpdatedItems();
+    hasUpdatedItems = pDlgInfo->HasUpdatedItems();
     needsRefresh = pDlgInfo->NeedRefresh();
     if (!needsRefresh)
-      return (pDlgInfo->HasUpdatedThumb() || pDlgInfo->HasUpdatedItems()) ? RESULT_OK_UPDATED
-                                                                          : RESULT_OK_NOT_UPDATED;
+    {
+      if (pDlgInfo->HasUpdatedUserrating() || pDlgInfo->HasUpdatedItems())
+        return RESULT_OK_UPDATED;
+      if (!pDlgInfo->HasUpdatedThumb())
+        return RESULT_OK_NOT_UPDATED;
+
+      updatedItem = std::make_shared<CFileItem>(*pDlgInfo->GetCurrentListItem());
+      return RESULT_OK_ART_UPDATED;
+    }
     // check if the item in the video info dialog has changed and if so, get the new item
     else if (pDlgInfo->GetCurrentListItem() != NULL)
     {
@@ -483,6 +536,10 @@ CGUIWindowVideoBase::ShowInfoResult CGUIWindowVideoBase::ShowInfo(
         // Info on folder containing a movie needs dyn path as path for refresh with correct name
         //! @todo get rid of "videos with versions as folder" hack to be able to fix in CFileItem::GetBaseMoviePath()
         item->SetPath(item->GetVideoInfoTag()->GetPath());
+        // The path now names the movie's file, so it is no folder either. Otherwise its nfo would
+        // be looked for in a listing of the file, which finds none
+        if (item->GetVideoInfoTag()->GetMediaType() == MEDIA::TYPE::MOVIE)
+          item->SetFolder(false);
       }
     }
   }
@@ -491,29 +548,33 @@ CGUIWindowVideoBase::ShowInfoResult CGUIWindowVideoBase::ShowInfo(
 
   // quietly return if Internet lookups are disabled
   if (!profileManager->GetCurrentProfile().canWriteDatabases() && !g_passwordManager.bMasterUser)
-    return RESULT_ERROR;
+    return hasChanges ? RESULT_OK_UPDATED : RESULT_ERROR;
 
   if (!info && item->GetVideoContentType() != VideoDbContentType::MOVIE_SETS)
-    return RESULT_ERROR;
+    return hasChanges ? RESULT_OK_UPDATED : RESULT_ERROR;
 
   if (CVideoLibraryQueue::GetInstance().IsScanningLibrary())
   {
     HELPERS::ShowOKDialogText(CVariant{13346}, CVariant{14057});
-    return RESULT_ERROR;
+    return hasChanges ? RESULT_OK_UPDATED : RESULT_ERROR;
   }
 
   bool listNeedsUpdating = false;
+  bool refreshFailed = false;
   // 3. Run a loop so that if we Refresh we re-run this block
   do
   {
     // reload images
     //! @todo we need this to update images in video info dialog immediately after refresh, but why?
-    CGUIMessage reload(GUI_MSG_NOTIFY_ALL, 0, 0, GUI_MSG_REFRESH_THUMBS);
+    CGUIMessage reload(GUI_MSG_NOTIFY_ALL, 0, 0, GUI_MSG_REFRESH_THUMBS, 0, item);
     OnMessage(reload);
 
     if (!CVideoLibraryQueue::GetInstance().RefreshItemModal(item, needsRefresh,
                                                             pDlgInfo->RefreshAll()))
+    {
+      refreshFailed = true;
       break;
+    }
 
     // remove directory caches and reload images
     CUtil::DeleteVideoDatabaseDirectoryCache();
@@ -521,6 +582,7 @@ CGUIWindowVideoBase::ShowInfoResult CGUIWindowVideoBase::ShowInfo(
 
     pDlgInfo->SetMovie(item.get());
     pDlgInfo->Open();
+    hasUpdatedItems = hasUpdatedItems || pDlgInfo->HasUpdatedItems();
     item->SetArt(ART::TYPE::THUMB, pDlgInfo->GetThumbnail());
     needsRefresh = pDlgInfo->NeedRefresh();
     if (needsRefresh && pDlgInfo->GetCurrentListItem() != nullptr)
@@ -533,12 +595,44 @@ CGUIWindowVideoBase::ShowInfoResult CGUIWindowVideoBase::ShowInfo(
     listNeedsUpdating = true;
   } while (needsRefresh);
 
-  return listNeedsUpdating ? RESULT_OK_UPDATED : RESULT_OK_NOT_UPDATED;
+  if (refreshFailed)
+  {
+    // the movie may have been removed from the library before the refresh failed
+    bool removed{false};
+    if (item->HasVideoInfoTag() && item->GetVideoInfoTag()->GetMediaType() == MEDIA::TYPE::MOVIE &&
+        item->GetVideoInfoTag()->m_iDbId > 0 && m_database.Open())
+    {
+      removed = m_database.GetMovieId(item->GetVideoInfoTag()->m_strFileNameAndPath) < 0;
+      m_database.Close();
+    }
+    return (listNeedsUpdating || removed || hasChanges) ? RESULT_OK_UPDATED : RESULT_OK_NOT_UPDATED;
+  }
+
+  // changes the dialog made to other items are only picked up by refreshing the list
+  const std::shared_ptr<CFileItem> dialogItem{pDlgInfo->GetCurrentListItem()};
+  if (hasUpdatedItems || !dialogItem || !dialogItem->HasVideoInfoTag() ||
+      !item->HasVideoInfoTag() ||
+      dialogItem->GetVideoInfoTag()->m_strFileNameAndPath !=
+          item->GetVideoInfoTag()->m_strFileNameAndPath)
+    return RESULT_OK_UPDATED;
+
+  updatedItem = std::make_shared<CFileItem>(*item);
+  return RESULT_OK_INFO_REFRESHED;
 }
 
-bool CGUIWindowVideoBase::ShowInfoAndRefresh(const CFileItemPtr& item, const ScraperPtr& info)
+bool CGUIWindowVideoBase::ShowInfoAndRefresh(const CFileItemPtr& item,
+                                             const ScraperPtr& info,
+                                             const std::string& listItemPath)
 {
-  const ShowInfoResult result{ShowInfo(item, info)};
+  const std::string originalFile{item->HasVideoInfoTag() &&
+                                         !item->GetVideoInfoTag()->m_strFileNameAndPath.empty()
+                                     ? item->GetVideoInfoTag()->m_strFileNameAndPath
+                                     : item->GetPath()};
+  // the dialog can send the refreshed details to the list item before they are compared
+  const std::optional<CVideoInfoTag> listedDetails{
+      item->HasVideoInfoTag() ? std::make_optional(*item->GetVideoInfoTag()) : std::nullopt};
+  std::shared_ptr<CFileItem> updatedItem;
+  const ShowInfoResult result{ShowInfo(item, info, updatedItem)};
   switch (result)
   {
     using enum ShowInfoResult;
@@ -548,9 +642,14 @@ bool CGUIWindowVideoBase::ShowInfoAndRefresh(const CFileItemPtr& item, const Scr
     case RESULT_OK_NOT_UPDATED:
       return true;
     case RESULT_OK_UPDATED:
+    case RESULT_OK_ART_UPDATED:
+    case RESULT_OK_INFO_REFRESHED:
     {
       // Test IsActive() since we can be called from other windows (music, home) we need this check
-      if (IsActive())
+      if (IsActive() && (result == RESULT_OK_UPDATED ||
+                         !UpdateMovieListItem(listItemPath, originalFile, *updatedItem,
+                                              result == RESULT_OK_INFO_REFRESHED,
+                                              listedDetails ? &*listedDetails : nullptr)))
       {
         const int selectedItem{m_viewControl.GetSelectedItem()};
         Refresh(true);
@@ -564,6 +663,132 @@ bool CGUIWindowVideoBase::ShowInfoAndRefresh(const CFileItemPtr& item, const Scr
 
   CLog::LogF(LOGWARNING, "Unhandled ShowInfoResult value treated as error.");
   return false;
+}
+
+bool CGUIWindowVideoBase::UpdateMovieListItem(const std::string& listItemPath,
+                                              const std::string& originalFile,
+                                              const CFileItem& item,
+                                              bool infoRefreshed,
+                                              const CVideoInfoTag* listedDetails)
+{
+  // the information dialog can move on to another item
+  if (!item.HasVideoInfoTag() || item.GetVideoInfoTag()->GetMediaType() != MEDIA::TYPE::MOVIE ||
+      item.GetVideoInfoTag()->m_strFileNameAndPath != originalFile)
+    return false;
+
+  std::shared_ptr<CFileItem> listItem;
+  for (const auto& listedItem : *m_vecItems)
+  {
+    if (listedItem->GetPath() == listItemPath)
+    {
+      listItem = listedItem;
+      break;
+    }
+  }
+  if (!listItem)
+    return false;
+
+  // stop before the item is read or changed, the loader thread writes it
+  if (m_thumbLoader.IsLoading())
+    m_thumbLoader.StopThread();
+
+  std::shared_ptr<CFileItem> newItem;
+  if (infoRefreshed)
+  {
+    // the refreshed details may change which items a filter, the watched mode or the movie set
+    // grouping shows
+    const bool wasWatched{listedDetails && listedDetails->GetPlayCount() > 0};
+    if (IsFiltered() || !GetProperty("filter").empty() ||
+        CURL(m_strFilterPath).HasOption("filter") ||
+        wasWatched != (item.GetVideoInfoTag()->GetPlayCount() > 0) ||
+        (listedDetails && listedDetails->m_set.GetID() != item.GetVideoInfoTag()->m_set.GetID()))
+      return false;
+
+    if (!m_database.Open())
+      return false;
+
+    // the filter path holds the library path a smart playlist was listed from
+    const std::string dbPath{VIDEO::IsVideoDb(*m_vecItems) ? m_vecItems->GetPath()
+                                                           : m_strFilterPath};
+    if (URIUtils::IsVideoDb(dbPath))
+    {
+      // a query by id finds the movie even when a limit leaves it out of the listing
+      const CURL dbUrl{dbPath};
+      PLAYLIST::CSmartPlaylist xsp;
+      const bool hasLimit{dbUrl.HasOption("xsp") && xsp.LoadFromJson(dbUrl.GetOption("xsp")) &&
+                          xsp.GetLimit() > 0};
+
+      // the refresh adds the movie again with a new id, query it the way the listing did
+      const CDatabase::Filter filter{
+          StringUtils::Format("movie_view.idMovie = {}", item.GetVideoInfoTag()->m_iDbId)};
+      CFileItemList items;
+      if (!hasLimit &&
+          CVideoDatabaseDirectory::GetDirectoryChildType(dbPath) == NodeType::TITLE_MOVIES &&
+          m_database.GetMoviesByWhere(dbPath, filter, items) && items.Size() == 1)
+      {
+        newItem = items.Get(0);
+        newItem->SetProperty(ITEM::PROPERTY::PARENT_PATH,
+                             listItem->GetProperty(ITEM::PROPERTY::PARENT_PATH));
+        // the program count holds the order of a smart playlist
+        newItem->SetProgramCount(listItem->GetProgramCount());
+      }
+    }
+    else
+    {
+      CFileItemList items{m_vecItems->GetPath()};
+      newItem = std::make_shared<CFileItem>(*listItem);
+      // the copy keeps the old details unless the library has a match for it
+      if (newItem->HasVideoInfoTag())
+        newItem->GetVideoInfoTag()->m_iDbId = -1;
+      items.Add(newItem);
+      LoadVideoInfo(items, m_database);
+      if (!newItem->HasVideoInfoTag() ||
+          newItem->GetVideoInfoTag()->m_iDbId != item.GetVideoInfoTag()->m_iDbId)
+        newItem.reset();
+    }
+
+    m_database.Close();
+
+    if (!newItem)
+      return false;
+  }
+
+  if (newItem)
+  {
+    const bool selected{listItem->IsSelected()};
+    *listItem = *newItem;
+    listItem->Select(selected);
+  }
+
+  listItem->ClearArt();
+  ART::FillInDefaultIcon(*listItem);
+  listItem->FreeMemory(true);
+
+  if (newItem)
+  {
+    const int selected{m_viewControl.GetSelectedItem()};
+    const std::shared_ptr<CFileItem> selectedItem{
+        selected >= 0 && selected < m_vecItems->Size() ? m_vecItems->Get(selected) : nullptr};
+    const std::vector<std::shared_ptr<CFileItem>> order{m_vecItems->cbegin(), m_vecItems->cend()};
+
+    m_vecItems->ClearSortState();
+    FormatAndSort(*m_vecItems);
+
+    // rebinding the items resets the scroll position, so only do it when the order changed
+    if (!std::ranges::equal(order, *m_vecItems))
+    {
+      m_viewControl.SetItems(*m_vecItems);
+      if (selectedItem)
+        m_viewControl.SetSelectedItem(selectedItem->GetPath());
+    }
+  }
+
+  // loading the art can open the video file, so it is left to the loader thread
+  m_restartThumbLoader = false;
+  m_thumbLoader.Load(*m_vecItems);
+
+  RemoveDiscCache(m_vecItems->GetPath());
+  return true;
 }
 
 void CGUIWindowVideoBase::OnQueueItem(int iItem, bool first)
@@ -994,6 +1219,8 @@ bool CGUIWindowVideoBase::OnContextButton(int itemNumber, CONTEXT_BUTTON button)
     return OnPlayMedia(itemNumber);
   case CONTEXT_BUTTON_CHOOSE_PLAYLIST:
   {
+    const CBackgroundInfoLoader::CItemHold itemHold{m_thumbLoader, item.get()};
+
     // The chosen playlist is assigned to a library item either way, so ask whether to play it
     if (VIDEO::UTILS::CanSaveDiscPlaylist(*item))
     {
@@ -1031,8 +1258,16 @@ bool CGUIWindowVideoBase::OnContextButton(int itemNumber, CONTEXT_BUTTON button)
 bool CGUIWindowVideoBase::OnPlayMedia(const std::shared_ptr<CFileItem>& pItem,
                                       const std::string& player)
 {
+  const bool partyMode{g_partyModeManager.IsEnabled(PartyModeContext::VIDEO)};
+  // before the hold, so that the loader stops instead of going on with another item
+  const bool loaderStopped{!partyMode && m_thumbLoader.IsLoading()};
+  if (loaderStopped)
+    m_thumbLoader.StopAsync();
+
+  const CBackgroundInfoLoader::CItemHold itemHold{m_thumbLoader, pItem.get()};
+
   // party mode
-  if (g_partyModeManager.IsEnabled(PartyModeContext::VIDEO))
+  if (partyMode)
   {
     PLAYLIST::CPlayList playlistTemp;
     playlistTemp.Add(pItem);
@@ -1057,21 +1292,30 @@ bool CGUIWindowVideoBase::OnPlayMedia(const std::shared_ptr<CFileItem>& pItem,
 
   itemCopy->SetProperty("playlist_type_hint", static_cast<int>(m_guiState->GetPlaylist()));
 
-  if (m_thumbLoader.IsLoading())
-    m_thumbLoader.StopAsync();
-
   CServiceBroker::GetPlaylistPlayer().Play(itemCopy, player);
   itemCopy->ClearProperty(ITEM::PROPERTY::PLAYLIST_CHOSEN);
 
   // Reset force selection flag
   pItem->ClearProperty(ITEM::PROPERTY::FORCE_PLAYLIST_SELECTION);
 
-  const auto& components = CServiceBroker::GetAppComponents();
-  const auto appPlayer = components.GetComponent<CApplicationPlayer>();
-  if (!appPlayer->IsPlayingVideo())
-    m_thumbLoader.Load(*m_vecItems);
-
+  if (loaderStopped)
+  {
+    const auto appPlayer{CServiceBroker::GetAppComponents().GetComponent<CApplicationPlayer>()};
+    if (appPlayer->IsPlaying() || appPlayer->HasNextItem())
+      m_restartThumbLoader = true;
+    else
+      m_thumbLoader.Load(*m_vecItems);
+  }
   return true;
+}
+
+void CGUIWindowVideoBase::RestartThumbLoader()
+{
+  if (!m_restartThumbLoader || !IsActive())
+    return;
+
+  m_restartThumbLoader = false;
+  m_thumbLoader.Load(*m_vecItems);
 }
 
 bool CGUIWindowVideoBase::OnPlayMedia(int iItem, const std::string& player)
@@ -1243,6 +1487,7 @@ bool CGUIWindowVideoBase::PlayItem(const std::shared_ptr<CFileItem>& pItem,
 
 bool CGUIWindowVideoBase::Update(const std::string &strDirectory, bool updateFilterPath /* = true */)
 {
+  m_restartThumbLoader = false;
   if (m_thumbLoader.IsLoading())
     m_thumbLoader.StopThread();
 
@@ -1350,6 +1595,7 @@ void CGUIWindowVideoBase::GetGroupedItems(CFileItemList &items)
 
 void CGUIWindowVideoBase::OnFilterItems(const std::string& filter)
 {
+  m_restartThumbLoader = false;
   // stop before the items are changed, the loader thread reads them
   if (m_thumbLoader.IsLoading())
     m_thumbLoader.StopThread();

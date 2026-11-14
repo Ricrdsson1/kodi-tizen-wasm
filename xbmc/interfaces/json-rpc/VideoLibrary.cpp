@@ -20,6 +20,7 @@
 #include "imagefiles/ImageFileURL.h"
 #include "messaging/ApplicationMessenger.h"
 #include "utils/ArtTypes.h"
+#include "utils/ItemProperties.h"
 #include "utils/SortUtils.h"
 #include "utils/StringUtils.h"
 #include "utils/URIUtils.h"
@@ -28,10 +29,21 @@
 #include "video/VideoDbPaths.h"
 #include "video/VideoDbUrl.h"
 #include "video/VideoLibraryQueue.h"
+#include "video/VideoUtils.h"
 
 #include <memory>
 
 using namespace JSONRPC;
+
+namespace
+{
+// A last played date can only be cleared from an item that ends up unwatched
+bool ClearsLastPlayed(const CVariant& parameterObject)
+{
+  const CVariant& lastPlayed = parameterObject["lastplayed"];
+  return lastPlayed.isString() && lastPlayed.empty();
+}
+} // unnamed namespace
 
 JSONRPC_STATUS CVideoLibrary::GetMovies(const std::string &method, ITransportLayer *transport, IClient *client, const CVariant &parameterObject, CVariant &result)
 {
@@ -635,6 +647,8 @@ JSONRPC_STATUS CVideoLibrary::SetMovieDetails(const std::string &method, ITransp
   std::set<std::string, std::less<>> removedArtwork;
   std::set<std::string, std::less<>> updatedDetails;
   UpdateVideoTag(parameterObject, infos, artwork, removedArtwork, updatedDetails);
+  if (ClearsLastPlayed(parameterObject) && infos.GetPlayCount() > 0)
+    return InvalidParams;
 
   if (videodatabase.UpdateDetailsForMovie(id, infos, artwork, updatedDetails) <= 0)
     return InternalError;
@@ -648,6 +662,8 @@ JSONRPC_STATUS CVideoLibrary::SetMovieDetails(const std::string &method, ITransp
     int newPlaycount = infos.GetPlayCount();
     infos.SetPlayCount(playcount);
     videodatabase.SetPlayCount(CFileItem(infos), newPlaycount, infos.m_lastPlayed);
+    if (newPlaycount != playcount)
+      KODI::VIDEO::UTILS::AnnouncePlayCountChanged(infos.m_strFileNameAndPath, newPlaycount);
   }
 
   UpdateResumePoint(parameterObject, infos, videodatabase);
@@ -699,7 +715,8 @@ JSONRPC_STATUS CVideoLibrary::SetTVShowDetails(const std::string &method, ITrans
     return InternalError;
 
   CVideoInfoTag infos;
-  if (!videodatabase.GetTvShowInfo("", infos, id) || infos.m_iDbId <= 0)
+  CFileItem showItem;
+  if (!videodatabase.GetTvShowInfo("", infos, id, &showItem) || infos.m_iDbId <= 0)
     return NotFound;
 
   // get artwork
@@ -713,6 +730,15 @@ JSONRPC_STATUS CVideoLibrary::SetTVShowDetails(const std::string &method, ITrans
   std::set<std::string, std::less<>> updatedDetails;
   UpdateVideoTag(parameterObject, infos, artwork, removedArtwork, updatedDetails);
 
+  const bool updatePlaycount = ParameterNotNull(parameterObject, "playcount");
+  const bool updateLastplayed = ParameterNotNull(parameterObject, "lastplayed");
+  const bool watched =
+      updatePlaycount
+          ? infos.GetPlayCount() > 0
+          : showItem.GetProperty(KODI::ITEM::PROPERTY::WATCHED_EPISODES).asInteger() > 0;
+  if (ClearsLastPlayed(parameterObject) && watched)
+    return InvalidParams;
+
   // we need to manually remove tags/taglinks for now because they aren't replaced
   // due to scrapers not supporting them
   videodatabase.RemoveTagsFromItem(id, KODI::MEDIA::TYPE::TV_SHOW);
@@ -723,8 +749,6 @@ JSONRPC_STATUS CVideoLibrary::SetTVShowDetails(const std::string &method, ITrans
   if (!videodatabase.RemoveArtForItem(infos.m_iDbId, KODI::MEDIA::TYPE::TV_SHOW, removedArtwork))
     return InternalError;
 
-  const bool updatePlaycount = ParameterNotNull(parameterObject, "playcount");
-  const bool updateLastplayed = ParameterNotNull(parameterObject, "lastplayed");
   if (updatePlaycount || updateLastplayed)
   {
     // a tvshow has no file row of its own - its playcount is derived from its
@@ -748,7 +772,12 @@ JSONRPC_STATUS CVideoLibrary::SetTVShowDetails(const std::string &method, ITrans
       const auto update = EpisodePlaybackUpdate(infos, updatePlaycount, updateLastplayed,
                                                 *episode->GetVideoInfoTag());
       if (update)
+      {
         videodatabase.SetPlayCount(*episode, update->playCount, update->lastPlayed);
+        if (update->playCount != episode->GetVideoInfoTag()->GetPlayCount())
+          KODI::VIDEO::UTILS::AnnouncePlayCountChanged(
+              episode->GetVideoInfoTag()->m_strFileNameAndPath, update->playCount);
+      }
     }
     videodatabase.CommitTransaction();
   }
@@ -826,6 +855,8 @@ JSONRPC_STATUS CVideoLibrary::SetEpisodeDetails(const std::string &method, ITran
   std::set<std::string, std::less<>> removedArtwork;
   std::set<std::string, std::less<>> updatedDetails;
   UpdateVideoTag(parameterObject, infos, artwork, removedArtwork, updatedDetails);
+  if (ClearsLastPlayed(parameterObject) && infos.GetPlayCount() > 0)
+    return InvalidParams;
 
   if (videodatabase.SetDetailsForEpisode(infos, artwork, tvshowid, id) <= 0)
     return InternalError;
@@ -839,6 +870,8 @@ JSONRPC_STATUS CVideoLibrary::SetEpisodeDetails(const std::string &method, ITran
     int newPlaycount = infos.GetPlayCount();
     infos.SetPlayCount(playcount);
     videodatabase.SetPlayCount(CFileItem(infos), newPlaycount, infos.m_lastPlayed);
+    if (newPlaycount != playcount)
+      KODI::VIDEO::UTILS::AnnouncePlayCountChanged(infos.m_strFileNameAndPath, newPlaycount);
   }
 
   UpdateResumePoint(parameterObject, infos, videodatabase);
@@ -873,6 +906,8 @@ JSONRPC_STATUS CVideoLibrary::SetMusicVideoDetails(const std::string &method, IT
   std::set<std::string, std::less<>> removedArtwork;
   std::set<std::string, std::less<>> updatedDetails;
   UpdateVideoTag(parameterObject, infos, artwork, removedArtwork, updatedDetails);
+  if (ClearsLastPlayed(parameterObject) && infos.GetPlayCount() > 0)
+    return InvalidParams;
 
   // we need to manually remove tags/taglinks for now because they aren't replaced
   // due to scrapers not supporting them
@@ -890,6 +925,8 @@ JSONRPC_STATUS CVideoLibrary::SetMusicVideoDetails(const std::string &method, IT
     int newPlaycount = infos.GetPlayCount();
     infos.SetPlayCount(playcount);
     videodatabase.SetPlayCount(CFileItem(infos), newPlaycount, infos.m_lastPlayed);
+    if (newPlaycount != playcount)
+      KODI::VIDEO::UTILS::AnnouncePlayCountChanged(infos.m_strFileNameAndPath, newPlaycount);
   }
 
   UpdateResumePoint(parameterObject, infos, videodatabase);
@@ -1314,7 +1351,10 @@ void CVideoLibrary::UpdateResumePoint(const CVariant &parameterObject, CVideoInf
   {
     double position = (double)parameterObject["resume"]["position"].asDouble();
     if (position == 0.0)
+    {
       videodatabase.ClearBookMarksOfFile(details.m_strFileNameAndPath, CBookmark::RESUME);
+      KODI::VIDEO::UTILS::AnnounceResumePointChanged(details.m_strFileNameAndPath, {});
+    }
     else
     {
       CBookmark bookmark;
@@ -1326,6 +1366,7 @@ void CVideoLibrary::UpdateResumePoint(const CVariant &parameterObject, CVideoInf
 
       bookmark.timeInSeconds = position;
       videodatabase.AddBookMarkToFile(details.m_strFileNameAndPath, bookmark, CBookmark::RESUME);
+      KODI::VIDEO::UTILS::AnnounceResumePointChanged(details.m_strFileNameAndPath, bookmark);
     }
   }
 }

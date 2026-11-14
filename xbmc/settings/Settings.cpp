@@ -432,6 +432,9 @@ void CSettings::InitializeOptionFillers()
                              StringSettingOptions& list, std::string& current)
       { CLangInfo::SettingOptionsTemperatureUnitsFiller(setting, list, current, g_langInfo); });
   GetSettingsManager()->RegisterSettingOptionsFiller("rendermethods", CBaseRenderer::SettingOptionsRenderMethodsFiller);
+  GetSettingsManager()->RegisterSettingOptionsFiller(
+      "imageadjustmentgranularities",
+      CMediaSettings::SettingOptionsImageAdjustmentGranularitiesFiller);
   GetSettingsManager()->RegisterSettingOptionsFiller("modes", CDisplaySettings::SettingOptionsModesFiller);
   GetSettingsManager()->RegisterSettingOptionsFiller("resolutions", CDisplaySettings::SettingOptionsResolutionsFiller);
   GetSettingsManager()->RegisterSettingOptionsFiller("screens", CDisplaySettings::SettingOptionsDispModeFiller);
@@ -471,6 +474,8 @@ void CSettings::InitializeOptionFillers()
       "playerqueuedatasizes", CPlayerSettings::SettingOptionsQueueDataSizesFiller);
   GetSettingsManager()->RegisterSettingOptionsFiller(
       "playerfastforwardspeeds", CPlayerSettings::SettingOptionsFastForwardSpeeds);
+  GetSettingsManager()->RegisterSettingOptionsFiller(
+      "rasteraspectratios", CPlayerSettings::SettingOptionsRasterAspectRatios);
 }
 
 void CSettings::UninitializeOptionFillers()
@@ -493,6 +498,7 @@ void CSettings::UninitializeOptionFillers()
   GetSettingsManager()->UnregisterSettingOptionsFiller("speedunits");
   GetSettingsManager()->UnregisterSettingOptionsFiller("temperatureunits");
   GetSettingsManager()->UnregisterSettingOptionsFiller("rendermethods");
+  GetSettingsManager()->UnregisterSettingOptionsFiller("imageadjustmentgranularities");
   GetSettingsManager()->UnregisterSettingOptionsFiller("resolutions");
   GetSettingsManager()->UnregisterSettingOptionsFiller("screens");
   GetSettingsManager()->UnregisterSettingOptionsFiller("stereoscopicmodes");
@@ -527,6 +533,7 @@ void CSettings::UninitializeOptionFillers()
   GetSettingsManager()->UnregisterSettingOptionsFiller("playerqueuetimesizes");
   GetSettingsManager()->UnregisterSettingOptionsFiller("playerqueuedatasizes");
   GetSettingsManager()->UnregisterSettingOptionsFiller("playerfastforwardspeeds");
+  GetSettingsManager()->UnregisterSettingOptionsFiller("rasteraspectratios");
 }
 
 void CSettings::InitializeConditions()
@@ -609,6 +616,9 @@ void CSettings::InitializeISettingCallbacks()
        CSettings::SETTING_VIDEOLIBRARY_GROUPMOVIESETS, CSettings::SETTING_VIDEOLIBRARY_CLEANUP,
        CSettings::SETTING_VIDEOLIBRARY_IMPORT, CSettings::SETTING_VIDEOLIBRARY_EXPORT,
        CSettings::SETTING_VIDEOLIBRARY_SHOWUNWATCHEDPLOTS,
+       CSettings::SETTING_VIDEOSCREEN_EXTRACTCONTENTGEOMETRY,
+       CSettings::SETTING_VIDEOSCREEN_CONTENTGEOMETRYONSCAN,
+       CSettings::SETTING_VIDEOSCREEN_SCANCONTENTGEOMETRY,
        CSettings::SETTING_MAINTENANCE_CLEANIMAGECACHE});
 
   GetSettingsManager()->RegisterCallback(

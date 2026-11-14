@@ -39,6 +39,7 @@
 #include "programs/GUIWindowPrograms.h"
 #include "settings/AdvancedSettings.h"
 #include "settings/SettingsComponent.h"
+#include "settings/windows/GUIWindowScreenAlignment.h"
 #include "settings/windows/GUIWindowSettings.h"
 #include "settings/windows/GUIWindowSettingsCategory.h"
 #include "settings/windows/GUIWindowSettingsScreenCalibration.h"
@@ -68,6 +69,12 @@
 #include "windows/GUIWindowSystemInfo.h"
 
 #include <mutex>
+
+namespace
+{
+// buffers older than this are fully redrawn
+constexpr int MAX_BUFFER_AGE = 10;
+} // namespace
 
 // Dialog includes
 #include "music/dialogs/GUIDialogMusicOSD.h"
@@ -221,6 +228,7 @@ void CGUIWindowManager::CreateWindows()
   Add(new CGUIWindowSettings);
   Add(new CGUIWindowSystemInfo);
   Add(new CGUIWindowSettingsScreenCalibration);
+  Add(new CGUIWindowScreenAlignment);
   Add(new CGUIWindowSettingsCategory);
   Add(new CGUIWindowVideoNav);
   Add(new CGUIWindowVideoPlaylist);
@@ -1287,7 +1295,10 @@ void CGUIWindowManager::Process(unsigned int currentTime)
 
   CGUIWindow* pWindow = GetWindow(GetActiveWindow());
   if (pWindow)
+  {
     pWindow->DoProcess(currentTime, m_dirtyregions);
+    m_guiSurround.Process(currentTime, m_dirtyregions);
+  }
 
   // process all dialogs - visibility may change etc.
   // copy shared_ptrs to ensure windows stay alive during iteration even if map is modified
@@ -1341,20 +1352,30 @@ void CGUIWindowManager::MarkDirty(const CRect& rect)
 
 void CGUIWindowManager::RenderPass() const
 {
+  CGraphicContext& context = CServiceBroker::GetWinSystem()->GetGfxContext();
+  context.ClearStencilBuckets();
+
+  // The clear and the surround fill what the confined interface leaves uncovered.
+  CGUIWindow* pWindow = GetWindow(GetActiveWindow());
+  if (pWindow)
+  {
+    pWindow->ClearBackground();
+    m_guiSurround.Render();
+  }
+
+  const CRect clip = context.ClipToGui();
   if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiFrontToBackRendering)
     RenderPassDual();
   else
     RenderPassSingle();
+  context.SetClip(clip);
 }
 
 void CGUIWindowManager::RenderPassSingle() const
 {
   CGUIWindow* pWindow = GetWindow(GetActiveWindow());
   if (pWindow)
-  {
-    pWindow->ClearBackground();
     pWindow->DoRender();
-  }
 
   // we render the dialogs based on their render order.
   auto renderList = m_activeDialogs;
@@ -1370,8 +1391,6 @@ void CGUIWindowManager::RenderPassSingle() const
 void CGUIWindowManager::RenderPassDual() const
 {
   CGUIWindow* pWindow = GetWindow(GetActiveWindow());
-  if (pWindow)
-    pWindow->ClearBackground();
 
   auto renderList = m_activeDialogs;
   stable_sort(renderList.begin(), renderList.end(), RenderOrderSortFunction);
@@ -1433,13 +1452,15 @@ bool CGUIWindowManager::Render()
   // otherwise the right eye drops them a frame early and misses redraws
   if (CServiceBroker::GetWinSystem()->GetGfxContext().GetStereoView() != RenderStereoView::RIGHT)
   {
-    if (bufferAge)
-      m_tracker.CleanMarkedRegions(bufferAge + 1);
-    else
-      m_tracker.CleanMarkedRegions(10);
+    // the buffer age counts presented frames and varies between frames, so keep the regions
+    // independently of it and only age them when a frame was presented
+    if (m_presentedFrame)
+      m_tracker.CleanMarkedRegions((visualizeDirtyRegions ? bufferAge : MAX_BUFFER_AGE) + 1);
+    m_presentedFrame = false;
   }
 
-  CDirtyRegionList dirtyRegions = m_tracker.GetDirtyRegions();
+  // one frame more than needed, as some platforms report a fixed buffer age
+  CDirtyRegionList dirtyRegions = m_tracker.GetDirtyRegions(bufferAge + 1);
 
   bool hasRendered = false;
   // If we visualize the regions we will always render the entire viewport
@@ -1451,7 +1472,10 @@ bool CGUIWindowManager::Render()
     RenderPass();
     hasRendered = true;
   }
-  else if (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_guiAlgorithmDirtyRegions == DIRTYREGION_SOLVER_FILL_VIEWPORT_ON_CHANGE)
+  else if (bufferAge > MAX_BUFFER_AGE ||
+           CServiceBroker::GetSettingsComponent()
+                   ->GetAdvancedSettings()
+                   ->m_guiAlgorithmDirtyRegions == DIRTYREGION_SOLVER_FILL_VIEWPORT_ON_CHANGE)
   {
     if (!dirtyRegions.empty())
     {
@@ -1469,7 +1493,12 @@ bool CGUIWindowManager::Render()
       if (!hasRendered)
         CServiceBroker::GetWinSystem()->SetDirtyRegions(dirtyRegions);
 
-      CServiceBroker::GetWinSystem()->GetGfxContext().SetScissors(i);
+      // Bounded by the display only, so the clear and the surround reach the whole region.
+      // RenderPass() confines the interface.
+      CGraphicContext& context = CServiceBroker::GetWinSystem()->GetGfxContext();
+      CRect region = i;
+      region.Intersect(CRect(0, 0, float(context.GetWidth()), float(context.GetHeight())));
+      context.SetClip(region);
       RenderPass();
       hasRendered = true;
     }
@@ -1486,6 +1515,7 @@ bool CGUIWindowManager::Render()
       CGUITexture::DrawQuad(i, 0x4c00ff00);
   }
 
+  m_presentedFrame |= hasRendered;
   return hasRendered;
 }
 
@@ -1512,7 +1542,7 @@ void CGUIWindowManager::AfterRender()
   if (dialogDirty)
   {
     if (pWindow)
-      pWindow->MarkDirtyRegion();
+      pWindow->MarkDirtyRegion(CGUIControl::DIRTY_STATE_CHILD);
 
     CGUIMessage msg(GUI_MSG_NOTIFY_ALL, 0, 0, GUI_MSG_STATE_CHANGED);
     for (const auto& window : activeDialogs)
@@ -1605,6 +1635,11 @@ void CGUIWindowManager::SetCallback(IWindowManagerCallback& callback)
 void CGUIWindowManager::DeInitialize()
 {
   std::unique_lock lock(CServiceBroker::GetWinSystem()->GetGfxContext());
+
+  // Unloading the skin is what brings us here, and the skin is one of the two things the
+  // surround is painted from.
+  m_guiSurround.ReleaseResources();
+  m_guiSurround.Invalidate();
 
   // Need a copy because addon-dialogs removes itself on Close()
   // Copy shared_ptrs to keep windows alive during cleanup

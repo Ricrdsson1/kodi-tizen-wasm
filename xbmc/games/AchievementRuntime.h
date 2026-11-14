@@ -13,6 +13,7 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace KODI::GAME
@@ -26,6 +27,20 @@ struct AchievementProgress
   unsigned int id{0};
   float measuredPercent{0.0f};
   std::string measuredProgress;
+};
+
+/*!
+ * \brief What an achievement means for finishing its game
+ */
+enum class AchievementType
+{
+  STANDARD,
+  //! Can be missed for good if the player passes the point to earn it
+  MISSABLE,
+  //! Needed to beat the game
+  PROGRESSION,
+  //! Earned for beating the game
+  WIN,
 };
 
 struct AchievementInfo
@@ -47,8 +62,22 @@ struct AchievementInfo
    */
   CDateTime unlockedDate;
 
+  /*!
+   * \brief When an achievement that encore re-armed was earned before,
+   *        invalid otherwise
+   */
+  CDateTime previouslyUnlockedDate;
+
   unsigned int points{0};
   bool earned{false};
+
+  /*!
+   * \brief Whether it was earned in hardcore mode
+   *
+   * RetroAchievements counts the modes separately: an achievement earned in
+   * casual mode can still be earned again in hardcore.
+   */
+  bool earnedHardcore{false};
 
   /*!
    * \brief Progress towards the achievement from 0.0 to 100.0, or 0.0 if the
@@ -65,6 +94,10 @@ struct AchievementInfo
    * counted.
    */
   std::string measuredProgress;
+
+  //! The set it belongs to, or 0 if the add-on didn't say
+  unsigned int setId{0};
+  AchievementType type{AchievementType::STANDARD};
 };
 
 /*!
@@ -196,6 +229,50 @@ struct LeaderboardSummary
   std::string topScore;
 };
 
+/*!
+ * \brief One achievement set of the loaded game
+ *
+ * The game's own set comes first, followed by subsets such as bonus sets.
+ */
+struct AchievementSet
+{
+  unsigned int id{0};
+  std::string title;
+  std::string badgeUrl;
+  //! Whether its achievements are earned and counted. The player can turn a
+  //! set off, and it stays off.
+  bool enabled{true};
+};
+
+//! The set and type of one achievement, as the add-on reports them
+struct AchievementDetails
+{
+  unsigned int achievementId{0};
+  unsigned int setId{0};
+  AchievementType type{AchievementType::STANDARD};
+};
+
+/*!
+ * \brief How close a set is to being beaten
+ *
+ * RetroAchievements counts a set as beaten once all of its progression
+ * achievements and one of its win achievements are earned.
+ */
+struct BeatenProgress
+{
+  unsigned int progression{0};
+  unsigned int progressionEarned{0};
+  unsigned int win{0};
+  unsigned int winEarned{0};
+
+  //! Whether the set has anything that marks it as beaten
+  bool CanBeBeaten() const { return progression > 0 || win > 0; }
+  bool IsBeaten() const
+  {
+    return CanBeBeaten() && progressionEarned == progression && (win == 0 || winEarned > 0);
+  }
+};
+
 struct LeaderboardState
 {
   std::string gameTitle;
@@ -207,11 +284,19 @@ struct AchievementState
 {
   std::string gameTitle;
   unsigned int gameId{0};
+  std::string gameIconUrl;
   unsigned int totalAchievements{0};
   unsigned int unlockedAchievements{0};
   std::string richPresence;
   std::vector<AchievementInfo> achievements;
+  //! Empty until the add-on reports them, which an older add-on doesn't
+  std::vector<AchievementSet> sets;
   bool loaded{false};
+
+  //! Whether a set's achievements count. One the add-on didn't name does.
+  bool IsSetEnabled(unsigned int setId) const;
+
+  BeatenProgress GetBeatenProgress(unsigned int setId) const;
 
   /*!
    * \brief Achievements the player is currently attempting
@@ -263,11 +348,47 @@ public:
    * \param unlockedDate When it was earned. Carried as a date rather than
    *        formatted text so the runtime stays free of locale handling and
    *        the formatting happens where it is displayed.
+   * \param hardcore True if it was earned in hardcore mode
    * \param[out] newlyEarned True if this changed the achievement's state
    */
   AchievementState MarkEarned(unsigned int achievementId,
                               const CDateTime& unlockedDate,
+                              bool hardcore,
                               bool& newlyEarned);
+  /*!
+   * \brief Record the loaded game's sets, and each achievement's set and type
+   *
+   * Totals count only the achievements of sets that are on.
+   */
+  void SetAchievementSets(const std::vector<AchievementSet>& sets,
+                          const std::vector<AchievementDetails>& details);
+
+  /*!
+   * \brief Turn a set's achievements in or out of the totals and indicators
+   *
+   * Only records what the add-on was already told. To have the add-on told,
+   * use RequestAchievementSetEnabled().
+   *
+   * \return False if the loaded game has no such set
+   */
+  bool SetAchievementSetEnabled(unsigned int setId, bool enabled);
+
+  /*!
+   * \brief Be asked to turn a set on or off in the add-on
+   *
+   * Set by the game client while a game is loaded, and cleared when it closes.
+   * Held rather than called directly for the same reason as the indicator
+   * callback: the runtime knows nothing about who evaluates achievements.
+   */
+  void SetAchievementSetHandler(std::function<bool(unsigned int setId, bool enabled)> handler);
+
+  /*!
+   * \brief Ask for a set to be turned on or off
+   *
+   * \return False if no game is loaded or the add-on refused
+   */
+  bool RequestAchievementSetEnabled(unsigned int setId, bool enabled);
+
   void SetRichPresence(const std::string& richPresence);
   std::string GetRichPresence() const;
 
@@ -314,13 +435,15 @@ public:
   void SetProgressIndicator(const AchievementProgressIndicator& indicator, bool active);
 
   /*!
-   * \brief The attempt worth a corner indicator, if any
+   * \brief An attempt worth a corner indicator, if any
    *
-   * The first the skin has something to draw for. More than one at a time is
-   * rare and a corner has room for one, and the add-on may send an attempt
-   * with no title, which would show as an empty corner if it were chosen.
+   * Counted in the order the attempts started, among those the skin has
+   * something to draw for: the add-on may send an attempt with no title, which
+   * would show as an empty corner.
+   *
+   * \param index Which of them, from 0
    */
-  AchievementChallenge GetShownChallenge() const;
+  AchievementChallenge GetShownChallenge(unsigned int index = 0) const;
 
   /*!
    * \brief The leaderboard attempt worth a corner indicator, if any
@@ -343,6 +466,20 @@ public:
   void SetLeaderboardTracker(const LeaderboardTracker& tracker, bool active);
 
   std::vector<LeaderboardTracker> GetLeaderboardTrackers() const;
+
+  /*!
+   * \brief Note a leaderboard attempt starting or ending
+   *
+   * A tracker doesn't say which leaderboard it times, so the skin is given the
+   * names of the attempts running while it is shown.
+   */
+  void SetLeaderboardAttempt(unsigned int leaderboardId, const std::string& title, bool running);
+
+  /*!
+   * \brief The names of the leaderboard attempts running, one per attempt and
+   * empty for an attempt without one
+   */
+  std::vector<std::string> GetLeaderboardAttemptTitles() const;
 
   /*!
    * \brief Replace the leaderboards of the loaded game
@@ -443,12 +580,16 @@ public:
   void NotifyIndicatorsChanged();
 
 private:
+  //! Must be called with m_mutex held
+  void RecountUnlocked();
+
   mutable std::mutex m_mutex;
 
   //! Whatever draws the on-screen indicators, told whenever one changes. Held
   //! rather than called directly so the runtime keeps knowing nothing about the
   //! GUI, and invoked outside the lock so it may read back safely.
   std::function<void()> m_indicatorCallback;
+  std::function<bool(unsigned int, bool)> m_setHandler;
   AchievementState m_state;
   LeaderboardState m_leaderboards;
 
@@ -456,6 +597,7 @@ private:
   //! that publishing one cannot drop an attempt already on screen. Usually
   //! empty, and rarely more than one at a time.
   std::vector<LeaderboardTracker> m_trackers;
+  std::vector<std::pair<unsigned int, std::string>> m_attempts;
   unsigned int m_selectedLeaderboard{0};
 
   //! Moved on whenever the signed-in account does, so an answer asked for by

@@ -28,11 +28,13 @@
 #include "cores/RetroPlayer/rendering/RPRenderManager.h"
 #include "cores/RetroPlayer/rendering/RenderContext.h"
 #include "cores/RetroPlayer/streams/RPStreamManager.h"
+#include "cores/VideoPlayer/VideoReferenceClock.h"
 #include "dialogs/GUIDialogKaiToast.h"
 #include "games/GameServices.h"
 #include "games/GameSettings.h"
 #include "games/GameUtils.h"
 #include "games/addons/GameClient.h"
+#include "games/addons/cheevos/GameClientCheevos.h"
 #include "games/addons/disc/GameClientDiscs.h"
 #include "games/addons/input/GameClientInput.h"
 #include "games/tags/GameInfoTag.h"
@@ -46,6 +48,8 @@
 #include "messaging/ApplicationMessenger.h"
 #include "resources/LocalizeStrings.h"
 #include "resources/ResourcesComponent.h"
+#include "settings/AdvancedSettings.h"
+#include "settings/SettingsComponent.h"
 #include "utils/StringUtils.h"
 #include "utils/log.h"
 #include "windowing/WinSystem.h"
@@ -118,6 +122,20 @@ bool CRetroPlayer::Open(const CFileItem& file, const CPlayerOptions& options)
 
   m_processInfo->SetDataCache(&CServiceBroker::GetDataCacheCore());
   m_processInfo->ResetInfo();
+  // The screen's refresh rate follows its vblanks, whether or not videos are
+  // synced to the display
+  m_displayClock = std::make_unique<CVideoReferenceClock>(true);
+  m_processInfo->GetDisplayPacing().SetRefreshRateSource([clock = m_displayClock.get()]
+                                                         { return clock->GetRefreshRate(); });
+  m_processInfo->GetDisplayPacing().SetEnabled(
+      m_gameServices.GameSettings().SyncPlaybackToDisplay());
+  m_processInfo->GetDisplayPacing().SetMaxRateDifference(
+      m_gameServices.GameSettings().SyncToDisplayLimit());
+  const float pacingMarginMs =
+      CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_gamesPacingMarginMs;
+  m_processInfo->GetDisplayPacing().SetMargin(
+      std::chrono::duration_cast<CDisplayPacing::Clock::duration>(
+          std::chrono::duration<float, std::milli>(pacingMarginMs)));
 
   m_guiMessenger = std::make_unique<CGUIGameMessenger>(*m_processInfo);
   m_renderManager = std::make_unique<CRPRenderManager>(*m_processInfo);
@@ -200,6 +218,8 @@ bool CRetroPlayer::Open(const CFileItem& file, const CPlayerOptions& options)
       m_gameClient->Unload();
     m_gameClient.reset();
     m_streamManager.reset();
+    m_processInfo->GetDisplayPacing().SetRefreshRateSource({});
+    m_displayClock.reset();
   }
 
   return bSuccess;
@@ -266,6 +286,7 @@ bool CRetroPlayer::CloseFile(bool reopen /* = false */)
     m_processInfo->ResetInfo();
   }
   m_processInfo.reset();
+  m_displayClock.reset();
   CLog::Log(LOGDEBUG, "RetroPlayer[PLAYER]: Playback stopped");
   m_callback.OnPlayBackStopped();
 
@@ -569,12 +590,6 @@ bool CRetroPlayer::LoadSavestate(const std::string& savestatePath)
   return false;
 }
 
-void CRetroPlayer::FreeSavestateResources(const std::string& savestatePath)
-{
-  if (m_renderManager)
-    m_renderManager->ClearVideoFrame(savestatePath);
-}
-
 void CRetroPlayer::CloseOSDCallback()
 {
   CloseOSD();
@@ -625,7 +640,7 @@ void CRetroPlayer::RequestAutosave()
 
 bool CRetroPlayer::RefuseSpeedInHardcore(double speed) const
 {
-  if (!m_gameServices.GameSettings().GetAchievementsHardcore())
+  if (!m_gameClient || !m_gameClient->Cheevos().IsHardcoreActive())
     return false;
 
   // Rewind runs the game backwards, so it arrives here as a negative speed
@@ -648,7 +663,7 @@ bool CRetroPlayer::RefuseSpeedInHardcore(double speed) const
 
 void CRetroPlayer::LeaveSpeedRefusedInHardcore()
 {
-  if (!m_playback || !m_gameServices.GameSettings().GetAchievementsHardcore())
+  if (!m_playback || !m_gameClient || !m_gameClient->Cheevos().IsHardcoreActive())
     return;
 
   const double speed = m_playback->GetSpeed();
@@ -695,7 +710,8 @@ void CRetroPlayer::CreatePlayback(const std::string& savestatePath)
   {
     m_playback->Deinitialize();
     m_playback = std::make_unique<CReversiblePlayback>(
-        m_gameClient.get(), *m_renderManager, *m_guiMessenger, m_gameClient->GetFrameRate(),
+        m_gameClient.get(), *m_renderManager, *m_streamManager, *m_guiMessenger,
+        m_processInfo->GetDisplayPacing(), m_gameClient->GetFrameRate(),
         m_gameClient->GetSerializeSize());
   }
   else
@@ -711,11 +727,11 @@ void CRetroPlayer::CreatePlayback(const std::string& savestatePath)
       // RetroAchievements requires a resumed session to drop to casual: the
       // player did not reach the state being resumed from in this session.
       // Done before the load, which is otherwise refused while hardcore is on.
-      GAME::CGameSettings& gameSettings = m_gameServices.GameSettings();
-      if (gameSettings.GetAchievementsHardcore())
+      // Only this session: the next game starts in hardcore again.
+      if (m_gameClient->Cheevos().IsHardcoreActive())
       {
         CLog::Log(LOGINFO, "RetroPlayer[SAVE]: Resuming from a savestate, dropping to casual mode");
-        gameSettings.SetAchievementsHardcore(false);
+        m_gameClient->Cheevos().LeaveHardcore();
 
         // "RetroAchievements", "Hardcore mode turned off. Achievements will be..."
         const auto& strings = CServiceBroker::GetResourcesComponent().GetLocalizeStrings();

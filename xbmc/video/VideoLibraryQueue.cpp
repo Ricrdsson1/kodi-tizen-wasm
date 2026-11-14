@@ -13,6 +13,7 @@
 #include "Util.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
+#include "video/geometry/ContentGeometryScanner.h"
 #include "video/jobs/VideoLibraryCleaningJob.h"
 #include "video/jobs/VideoLibraryJob.h"
 #include "video/jobs/VideoLibraryMarkWatchedJob.h"
@@ -245,10 +246,12 @@ void CVideoLibraryQueue::CancelJob(CVideoLibraryJob *job)
   if (job->CanBeCancelled())
     job->Cancel();
 
-  // A running source refresh finishes its current item before releasing the queue slot. One that
-  // hasn't started is removed now, as it returns at once if it starts after Cancel().
-  if (jobType == CVideoLibraryRefreshingSourceJob::TYPE &&
-      static_cast<CVideoLibraryRefreshingSourceJob*>(job)->HasStarted())
+  // A running scan or source refresh finishes its current item before releasing the queue slot.
+  // One that hasn't started is removed now, as it returns at once if it starts after Cancel().
+  if ((jobType == CVideoLibraryRefreshingSourceJob::TYPE &&
+       static_cast<CVideoLibraryRefreshingSourceJob*>(job)->HasStarted()) ||
+      (jobType == CVideoLibraryScanningJob::TYPE &&
+       static_cast<CVideoLibraryScanningJob*>(job)->HasStarted()))
     return;
 
   // remove the job from the job queue
@@ -298,6 +301,9 @@ void CVideoLibraryQueue::OnJobComplete(unsigned int jobID, bool success, CJob *j
   {
     if (QueueEmpty())
       Refresh();
+
+    if (std::strcmp(job->GetType(), CVideoLibraryScanningJob::TYPE) == 0)
+      KODI::VIDEO::GEOMETRY::CContentGeometryScanner::GetInstance().Sweep();
   }
 
   {
