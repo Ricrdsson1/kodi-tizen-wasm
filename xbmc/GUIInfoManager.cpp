@@ -484,6 +484,24 @@ constexpr std::array<InfoMap, 7> integer_bools = {{
 ///     video playback).
 ///     <p>
 ///   }
+///   \table_row3{   <b>`Player.WaitingForAudio`</b>,
+///                  \anchor Player_WaitingForAudio
+///                  _boolean_,
+///     @return **True** while playback is held at its start for the audio device downstream
+///     to lock on to a new audio format.
+///     <p><hr>
+///     @skinning_v23 **[New Boolean Condition]** \link Player_WaitingForAudio `Player.WaitingForAudio`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`Player.WaitingForAudioRemaining`</b>,
+///                  \anchor Player_WaitingForAudioRemaining
+///                  _integer_ / _string_,
+///     @return The time left of \link Player_WaitingForAudio `Player.WaitingForAudio`\endlink as a
+///     percentage, from 100 when the hold starts to 0 when it runs out.
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link Player_WaitingForAudioRemaining `Player.WaitingForAudioRemaining`\endlink
+///     <p>
+///   }
 ///   \table_row3{   <b>`Player.DisplayAfterSeek`</b>,
 ///                  \anchor Player_DisplayAfterSeek
 ///                  _boolean_,
@@ -862,7 +880,7 @@ constexpr std::array<InfoMap, 7> integer_bools = {{
 ///     <p>
 ///   }
 // clang-format off
-constexpr std::array<InfoMap, 60> player_labels = {{
+constexpr std::array<InfoMap, 62> player_labels = {{
     {"hasmedia",              PLAYER_HAS_MEDIA},
     {"hasaudio",              PLAYER_HAS_AUDIO},
     {"hasvideo",              PLAYER_HAS_VIDEO},
@@ -885,6 +903,8 @@ constexpr std::array<InfoMap, 60> player_labels = {{
     {"forwarding16x",         PLAYER_FORWARDING_16x},
     {"forwarding32x",         PLAYER_FORWARDING_32x},
     {"caching",               PLAYER_CACHING},
+    {"waitingforaudio",       PLAYER_WAITING_FOR_AUDIO},
+    {"waitingforaudioremaining", PLAYER_WAITING_FOR_AUDIO_REMAINING},
     {"seekbar",               PLAYER_SEEKBAR},
     {"seeking",               PLAYER_SEEKING},
     {"showtime",              PLAYER_SHOWTIME},
@@ -3173,6 +3193,16 @@ constexpr std::array<InfoMap, 46> musicplayer = {{
 ///     @skinning_v13 **[New Boolean Condition]** \link VideoPlayer_IsStereoscopic `VideoPlayer.IsStereoscopic`\endlink
 ///     <p>
 ///   }
+///   \table_row3{   <b>`VideoPlayer.ContentAspectVaries`</b>,
+///                  \anchor VideoPlayer_ContentAspectVaries
+///                  _boolean_,
+///     @return **True** when the currently playing title's picture changes shape partway
+///     through\, so that one ratio does not describe all of it. What the other ratios are is
+///     at \ref VideoPlayer_ContentAspect "VideoPlayer.ContentAspect(n)".
+///     <p><hr>
+///     @skinning_v23 **[New Boolean Condition]** \link VideoPlayer_ContentAspectVaries `VideoPlayer.ContentAspectVaries`\endlink
+///     <p>
+///   }
 ///   \table_row3{   <b>`VideoPlayer.SubtitlesEnabled`</b>,
 ///                  \anchor VideoPlayer_SubtitlesEnabled
 ///                  _boolean_,
@@ -3979,6 +4009,58 @@ constexpr std::array<InfoMap, 46> musicplayer = {{
 ///     @skinning_v18 **[New Infolabel]** \link VideoPlayer_VideoBitrate `VideoPlayer.VideoBitrate`\endlink
 ///     <p>
 ///   }
+///   \table_row3{   <b>`VideoPlayer.VideoAspectName`</b>,
+///                  \anchor VideoPlayer_VideoAspectName
+///                  _string_,
+///     @return The name of the aspect ratio of the currently playing video (possible values:
+///     see \ref ListItem_VideoAspectName "ListItem.VideoAspectName").
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link VideoPlayer_VideoAspectName `VideoPlayer.VideoAspectName`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`VideoPlayer.ContentAspect([n])`</b>,
+///                  \anchor VideoPlayer_ContentAspect
+///                  _string_,
+///     @return The ratio of the picture inside the currently playing video's frame\, e.g. `2.35`
+///     - which is what the film was shot at\, where \ref VideoPlayer_VideoAspect
+///     "VideoPlayer.VideoAspect" is the shape of the frame carrying it. Empty when nothing has
+///     been measured or declared. `n` indexes the ratios a title whose geometry changes partway
+///     through contains\, dominant first\, so `ContentAspect` and `ContentAspect(0)` are the
+///     same value (possible values: see \ref ListItem_VideoAspect "ListItem.VideoAspect").
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link VideoPlayer_ContentAspect `VideoPlayer.ContentAspect`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`VideoPlayer.ContentAspectName([n])`</b>,
+///                  \anchor VideoPlayer_ContentAspectName
+///                  _string_,
+///     @return What the ratio at \ref VideoPlayer_ContentAspect "VideoPlayer.ContentAspect" is
+///     called\, e.g. `Scope`\, and empty when it has no name. Not translated (possible values:
+///     see \ref ListItem_VideoAspectName "ListItem.VideoAspectName").
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link VideoPlayer_ContentAspectName `VideoPlayer.ContentAspectName`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`VideoPlayer.ContentAspectCount`</b>,
+///                  \anchor VideoPlayer_ContentAspectCount
+///                  _string_,
+///     @return How many distinct ratios the currently playing title contains\, and **`0` when
+///     nothing was measured or declared for it**\, which is not the same as a title detected as
+///     the shape of its own frame. The count is of ratios\, never of how much runtime each holds.
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link VideoPlayer_ContentAspectCount `VideoPlayer.ContentAspectCount`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`VideoPlayer.ContentAspectSource`</b>,
+///                  \anchor VideoPlayer_ContentAspectSource
+///                  _string_,
+///     @return Where the ratio came from: `container` (nothing is known\, so the frame is the
+///     answer)\, `cached` (a stored measurement)\, `live` (measured during playback) or
+///     `declared` (stated by the viewer\, which pins).
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link VideoPlayer_ContentAspectSource `VideoPlayer.ContentAspectSource`\endlink
+///     <p>
+///   }
 ///   \table_row3{   <b>`VideoPlayer.AudioCodec`</b>,
 ///                  \anchor VideoPlayer_AudioCodec
 ///                  _string_,
@@ -4338,7 +4420,7 @@ constexpr std::array<InfoMap, 46> musicplayer = {{
 ///
 /// -----------------------------------------------------------------------------
 // clang-format off
-constexpr std::array<InfoMap, 88> videoplayer = {{
+constexpr std::array<InfoMap, 94> videoplayer = {{
     {"title",                 VIDEOPLAYER_TITLE},
     {"genre",                 VIDEOPLAYER_GENRE},
     {"country",               VIDEOPLAYER_COUNTRY},
@@ -4375,6 +4457,12 @@ constexpr std::array<InfoMap, 88> videoplayer = {{
     {"videocodec",            VIDEOPLAYER_VIDEO_CODEC},
     {"videoresolution",       VIDEOPLAYER_VIDEO_RESOLUTION},
     {"videoaspect",           VIDEOPLAYER_VIDEO_ASPECT},
+    {"videoaspectname",       VIDEOPLAYER_VIDEO_ASPECT_NAME},
+    {"contentaspect",         VIDEOPLAYER_CONTENT_ASPECT},
+    {"contentaspectname",     VIDEOPLAYER_CONTENT_ASPECT_NAME},
+    {"contentaspectcount",    VIDEOPLAYER_CONTENT_ASPECT_COUNT},
+    {"contentaspectsource",   VIDEOPLAYER_CONTENT_ASPECT_SOURCE},
+    {"contentaspectvaries",   VIDEOPLAYER_CONTENT_ASPECT_VARIES},
     {"videobitrate",          VIDEOPLAYER_VIDEO_BITRATE},
     {"audiocodec",            VIDEOPLAYER_AUDIO_CODEC},
     {"audiochannels",         VIDEOPLAYER_AUDIO_CHANNELS},
@@ -4550,6 +4638,17 @@ constexpr std::array<InfoMap, 88> videoplayer = {{
 ///     @skinning_v23 **[New Boolean Condition]** \link RetroPlayer_AchievementsHardcore `RetroPlayer.AchievementsHardcore`\endlink
 ///     <p>
 ///   }
+///   \table_row3{   <b>`RetroPlayer.LeaderboardTrackerTitle`</b>,
+///                  \anchor RetroPlayer_LeaderboardTrackerTitle
+///                  _string_,
+///     @return The name of the leaderboard being attempted while its value is
+///     shown\, so a skin can say what the value is for\, or an empty string.
+///     With more than one attempt running\, the value can't be matched to one
+///     of them\, so the string is empty.
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link RetroPlayer_LeaderboardTrackerTitle `RetroPlayer.LeaderboardTrackerTitle`\endlink
+///     <p>
+///   }
 ///   \table_row3{   <b>`RetroPlayer.AchievementsProgress`</b>,
 ///                  \anchor RetroPlayer_AchievementsProgress
 ///                  _string_,
@@ -4558,6 +4657,26 @@ constexpr std::array<InfoMap, 88> videoplayer = {{
 ///     the game has no achievements.
 ///     <p><hr>
 ///     @skinning_v22 **[New Infolabel]** \link RetroPlayer_AchievementsProgress `RetroPlayer.AchievementsProgress`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`RetroPlayer.AchievementsChallengeTitle(n)`</b>,
+///                  \anchor RetroPlayer_AchievementsChallengeTitle
+///                  _string_,
+///     @return The title of an achievement being attempted\, or an empty string
+///     if there isn't one or challenge indicators are turned off. Several can
+///     be attempted at once: `n` counts them from 1 in the order they started\,
+///     and without it the first is returned.
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link RetroPlayer_AchievementsChallengeTitle `RetroPlayer.AchievementsChallengeTitle(n)`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`RetroPlayer.AchievementsChallengeBadge(n)`</b>,
+///                  \anchor RetroPlayer_AchievementsChallengeBadge
+///                  _string_,
+///     @return The badge image of an achievement being attempted\, counted as
+///     for \ref RetroPlayer_AchievementsChallengeTitle "RetroPlayer.AchievementsChallengeTitle(n)".
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link RetroPlayer_AchievementsChallengeBadge `RetroPlayer.AchievementsChallengeBadge(n)`\endlink
 ///     <p>
 ///   }
 ///   \table_row3{   <b>`RetroPlayer.RichPresence`</b>,
@@ -4648,7 +4767,7 @@ constexpr std::array<InfoMap, 88> videoplayer = {{
 ///
 /// -----------------------------------------------------------------------------
 // clang-format off
-constexpr std::array<InfoMap, 29> retroplayer = {{
+constexpr std::array<InfoMap, 30> retroplayer = {{
     {"title", RETROPLAYER_TITLE},
     {"platform", RETROPLAYER_PLATFORM},
     {"genres", RETROPLAYER_GENRES},
@@ -4666,6 +4785,7 @@ constexpr std::array<InfoMap, 29> retroplayer = {{
     {"achievementschallengetitle", RETROPLAYER_ACHIEVEMENTS_CHALLENGE_TITLE},
     {"achievementschallengebadge", RETROPLAYER_ACHIEVEMENTS_CHALLENGE_BADGE},
     {"leaderboardtracker", RETROPLAYER_LEADERBOARD_TRACKER},
+    {"leaderboardtrackertitle", RETROPLAYER_LEADERBOARD_TRACKER_TITLE},
     {"achievementsindicatortitle", RETROPLAYER_ACHIEVEMENTS_INDICATOR_TITLE},
     {"achievementsindicatorbadge", RETROPLAYER_ACHIEVEMENTS_INDICATOR_BADGE},
     {"achievementsindicatorprogress", RETROPLAYER_ACHIEVEMENTS_INDICATOR_PROGRESS},
@@ -6388,8 +6508,7 @@ constexpr std::array<InfoMap, 3> container_str = {{
 ///                  \anchor ListItem_Rating
 ///                  _string_,
 ///     @return The scraped rating of the currently selected item in a container (1-10).
-///     @param name - [opt] you can specify the name of the scraper to retrieve a specific rating\,
-///     for use in dialogvideoinfo.xml.
+///     @param name - [opt] you can specify the name of the scraper to retrieve a specific rating.
 ///     <p><hr>
 ///     @skinning_v18 **[Infolabel Updated]** \link ListItem_Rating `ListItem.Rating([name])`\endlink replaces
 ///     the old `ListItem.Ratings([name])` infolabel.
@@ -6399,6 +6518,8 @@ constexpr std::array<InfoMap, 3> container_str = {{
 ///     <p>
 ///     @skinning_v23 **[Infolabel Updated]** \link ListItem_Rating `ListItem.Rating`\endlink extended
 ///     to support games
+///     @skinning_v23 **[Infolabel Updated]** \link ListItem_Rating `ListItem.Rating(name)`\endlink
+///     filled in library lists and widgets
 ///     <p>
 ///   }
 ///   \table_row3{   <b>`ListItem.Set`</b>,
@@ -6454,12 +6575,14 @@ constexpr std::array<InfoMap, 3> container_str = {{
 ///                  \anchor ListItem_Votes
 ///                  _string_,
 ///     @return The scraped votes of the currently selected movie in a container.
-///     @param name - [opt] you can specify the name of the scraper to retrieve specific votes\,
-///     for use in `dialogvideoinfo.xml`.
+///     @param name - [opt] you can specify the name of the scraper to retrieve specific votes.
 ///     <p><hr>
 ///     @skinning_v17 **[Infolabel Updated]** \link ListItem_Votes `ListItem.Votes([name])`\endlink
 ///     add optional param <b>name</b> to specify the scrapper.
 ///     @skinning_v13 **[New Infolabel]** \link ListItem_Votes `ListItem.Votes`\endlink
+///     <p>
+///     @skinning_v23 **[Infolabel Updated]** \link ListItem_Votes `ListItem.Votes(name)`\endlink
+///     filled in library lists and widgets
 ///     <p>
 ///   }
 ///   \table_row3{   <b>`ListItem.RatingAndVotes([name])`</b>,
@@ -6467,12 +6590,15 @@ constexpr std::array<InfoMap, 3> container_str = {{
 ///                  _string_,
 ///     @return The scraped rating and votes of the currently selected movie in a
 ///     container (1-10).
-///     @param name - [opt] you can specify the name of the scraper to retrieve specific votes\,
-///     for use in `dialogvideoinfo.xml`.
+///     @param name - [opt] you can specify the name of the scraper to retrieve a specific rating
+///     and votes.
 ///     <p><hr>
 ///     @skinning_v17 **[New Infolabel]** \link ListItem_RatingAndVotes `ListItem.RatingAndVotes([name])`\endlink
 ///     @skinning_v17 **[Infolabel Updated]** \link ListItem_RatingAndVotes `ListItem.RatingAndVotes`\endlink
 ///     now available for albums/songs.
+///     <p>
+///     @skinning_v23 **[Infolabel Updated]** \link ListItem_RatingAndVotes
+///     `ListItem.RatingAndVotes(name)`\endlink filled in library lists and widgets
 ///     <p>
 ///   }
 ///   \table_row3{   <b>`ListItem.Mood`</b>,
@@ -6631,6 +6757,8 @@ constexpr std::array<InfoMap, 3> container_str = {{
 ///     <p>
 ///     @skinning_v23 **[Infolabel Updated]** \link ListItem_Tag `ListItem.Tag`\endlink extended
 ///     to support games
+///     @skinning_v23 **[Infolabel Updated]** \link ListItem_Tag `ListItem.Tag`\endlink filled in
+///     library lists and widgets
 ///     <p>
 ///   }
 ///   \table_row3{   <b>`ListItem.Tagline`</b>,
@@ -6775,6 +6903,78 @@ constexpr std::array<InfoMap, 3> container_str = {{
 ///      - <b>2.40</b>
 ///      - <b>2.55</b>
 ///      - <b>2.76</b>
+///     .
+///     The list is the shipped `system/aspectratios.xml`\, which a user may add to.
+///     <p>
+///   }
+///   \table_row3{   <b>`ListItem.VideoAspectName`</b>,
+///                  \anchor ListItem_VideoAspectName
+///                  _string_,
+///     @return What that aspect ratio is called\, empty for a ratio that has no name.
+///     Reported alongside \ref ListItem_VideoAspect "ListItem.VideoAspect"\, never instead
+///     of it. Not translated. Values:
+///      - <b>Movietone</b>
+///      - <b>4:3</b>
+///      - <b>Academy</b>
+///      - <b>IMAX 70mm</b>
+///      - <b>3:2</b>
+///      - <b>16:9</b>
+///      - <b>Flat</b>
+///      - <b>IMAX digital</b>
+///      - <b>Univisium</b>
+///      - <b>Todd-AO</b>
+///      - <b>CinemaScope</b>
+///      - <b>Scope</b>
+///      - <b>CinemaScope 55</b>
+///      - <b>Ultra Panavision 70</b>
+///     .
+///     The list is the shipped `system/aspectratios.xml`\, which a user may add to or rename.
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link ListItem_VideoAspectName `ListItem.VideoAspectName`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`ListItem.ContentAspect([n])`</b>,
+///                  \anchor ListItem_ContentAspect
+///                  _string_,
+///     @return The ratio of the picture inside the selected item's frame - what the film was
+///     shot at\, where \ref ListItem_VideoAspect "ListItem.VideoAspect" is the shape of the
+///     frame carrying it. A hard-matted 2.35 film in a 1920x1080 encode reports `2.35` here and
+///     `1.78` there. Empty when nothing has been measured or declared for the item. `n` indexes
+///     the ratios a title whose geometry changes partway through contains\, dominant first\, so
+///     `ContentAspect` and `ContentAspect(0)` are the same value. Values as for \ref
+///     ListItem_VideoAspect "ListItem.VideoAspect".
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link ListItem_ContentAspect `ListItem.ContentAspect`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`ListItem.ContentAspectName([n])`</b>,
+///                  \anchor ListItem_ContentAspectName
+///                  _string_,
+///     @return What the ratio at \ref ListItem_ContentAspect "ListItem.ContentAspect" is
+///     called\, empty for a ratio that has no name. Not translated. Values as for \ref
+///     ListItem_VideoAspectName "ListItem.VideoAspectName".
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link ListItem_ContentAspectName `ListItem.ContentAspectName`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`ListItem.ContentAspectCount`</b>,
+///                  \anchor ListItem_ContentAspectCount
+///                  _string_,
+///     @return How many distinct ratios the selected item contains\, and **`0` when nothing was
+///     measured or declared for it**\, which is not the same as an item detected as the shape of
+///     its own frame. The count is of ratios\, never of how much runtime each holds.
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link ListItem_ContentAspectCount `ListItem.ContentAspectCount`\endlink
+///     <p>
+///   }
+///   \table_row3{   <b>`ListItem.ContentAspectSource`</b>,
+///                  \anchor ListItem_ContentAspectSource
+///                  _string_,
+///     @return Where the ratio came from: `container` (nothing is known\, so the frame is the
+///     answer)\, `cached` (a stored measurement)\, `live` (measured during playback) or
+///     `declared` (stated by the viewer\, which pins).
+///     <p><hr>
+///     @skinning_v23 **[New Infolabel]** \link ListItem_ContentAspectSource `ListItem.ContentAspectSource`\endlink
 ///     <p>
 ///   }
 ///   \table_row3{   <b>`ListItem.AudioCodec`</b>,
@@ -7747,11 +7947,13 @@ constexpr std::array<InfoMap, 3> container_str = {{
 ///   \table_row3{   <b>`ListItem.UniqueID(name)`</b>,
 ///                  \anchor ListItem_UniqueID
 ///                  _string_,
-///     @return The scraped metadata id of the currently selected item in a container\,
-///     for use in dialogvideoinfo.xml.
+///     @return The scraped metadata id of the currently selected item in a container.
 ///     @param name - the name of the metadata provider.
 ///     <p><hr>
 ///     @skinning_v19 **[New Infolabel]** \link ListItem_UniqueID `ListItem.UniqueID(name)`\endlink
+///     <p>
+///     @skinning_v23 **[Infolabel Updated]** \link ListItem_UniqueID `ListItem.UniqueID(name)`\endlink
+///     filled in library lists and widgets
 ///     <p>
 ///   }
 ///   \table_row3{   <b>`ListItem.BitRate`</b>,
@@ -7859,6 +8061,15 @@ constexpr std::array<InfoMap, 3> container_str = {{
 ///     <p><hr>
 ///     @skinning_v21 **[New Infolabel]** \link ListItem_IsVideoExtra `ListItem.IsVideoExtra`\endlink
 ///   }
+///   \table_row3{   <b>`ListItem.ContentAspectVaries`</b>,
+///                  \anchor ListItem_ContentAspectVaries
+///                  _boolean_,
+///     @return **True** when the selected item's picture changes shape partway through\, so
+///     that one ratio does not describe all of it. What the other ratios are is at \ref
+///     ListItem_ContentAspect "ListItem.ContentAspect(n)".
+///     <p><hr>
+///     @skinning_v23 **[New Boolean Condition]** \link ListItem_ContentAspectVaries `ListItem.ContentAspectVaries`\endlink
+///   }
 ///   \table_row3{   <b>`ListItem.VideoVersionName`</b>,
 ///                  \anchor ListItem_VideoVersionName
 ///                  _string_,
@@ -7936,7 +8147,7 @@ constexpr std::array<InfoMap, 3> container_str = {{
 ///
 /// -----------------------------------------------------------------------------
 // clang-format off
-constexpr std::array<InfoMap, 238> listitem_labels = {{
+constexpr std::array<InfoMap, 244> listitem_labels = {{
     {"thumb",                         LISTITEM_THUMB},
     {"icon",                          LISTITEM_ICON},
     {"actualicon",                    LISTITEM_ACTUAL_ICON},
@@ -8059,6 +8270,12 @@ constexpr std::array<InfoMap, 238> listitem_labels = {{
     {"videowidth",                    LISTITEM_VIDEO_WIDTH},
     {"videoheight",                   LISTITEM_VIDEO_HEIGHT},
     {"videoaspect",                   LISTITEM_VIDEO_ASPECT},
+    {"videoaspectname",               LISTITEM_VIDEO_ASPECT_NAME},
+    {"contentaspect",                 LISTITEM_CONTENT_ASPECT},
+    {"contentaspectname",             LISTITEM_CONTENT_ASPECT_NAME},
+    {"contentaspectcount",            LISTITEM_CONTENT_ASPECT_COUNT},
+    {"contentaspectsource",           LISTITEM_CONTENT_ASPECT_SOURCE},
+    {"contentaspectvaries",           LISTITEM_CONTENT_ASPECT_VARIES},
     {"audiocodec",                    LISTITEM_AUDIO_CODEC},
     {"audiochannels",                 LISTITEM_AUDIO_CHANNELS},
     {"audiolanguage",                 LISTITEM_AUDIO_LANGUAGE},
@@ -11492,6 +11709,15 @@ int CGUIInfoManager::TranslateSingleString(const std::string& strCondition, bool
       {
         return AddMultiInfo(CGUIInfo(VIDEOPLAYER_ART, prop.param(), 0));
       }
+      // The ratios a title contains, dominant first. Index zero is the same answer the
+      // unparameterised form gives, so a skin writing a loop does not need a special case
+      // for the first one.
+      if ((prop.Name() == "contentaspect" || prop.Name() == "contentaspectname") &&
+          prop.num_params() > 0)
+      {
+        return AddMultiInfo(CGUIInfo(TranslateVideoPlayerString(prop.Name()),
+                                     static_cast<uint32_t>(std::atoi(prop.param().c_str()))));
+      }
       if (prop.Name() == "cast" && prop.num_params() > 0)
       {
         return AddMultiInfo(CGUIInfo(VIDEOPLAYER_CAST, TranslateListSeparator(prop.param()), 0));
@@ -11529,8 +11755,27 @@ int CGUIInfoManager::TranslateSingleString(const std::string& strCondition, bool
     {
       for (const auto& i : retroplayer)
       {
-        if (prop.Name() == i.str)
-          return i.val;
+        if (prop.Name() != i.str)
+          continue;
+
+        // Several achievements can be attempted at once, so these can name one
+        // by its place
+        if (prop.num_params() == 1 && (i.val == RETROPLAYER_ACHIEVEMENTS_CHALLENGE_TITLE ||
+                                       i.val == RETROPLAYER_ACHIEVEMENTS_CHALLENGE_BADGE))
+        {
+          const std::string& param = prop.param(0);
+          uint32_t place = 0;
+          const auto [end, error] =
+              std::from_chars(param.data(), param.data() + param.size(), place);
+          // CGUIInfo keeps flags in the top 8 bits of its data
+          if (error != std::errc{} || end != param.data() + param.size() || place == 0 ||
+              place >= (1u << 24))
+            return 0;
+
+          return AddMultiInfo(CGUIInfo(i.val, place));
+        }
+
+        return i.val;
       }
     }
     else if (cat.Name() == "slideshow")
@@ -11868,6 +12113,11 @@ int CGUIInfoManager::TranslateListItem(const Property& cat,
              prop.Name() == "firstaudiochannels")
     {
       data3 = prop.param();
+    }
+    // Index zero is the unparameterised form's answer, as for VideoPlayer.
+    else if (prop.Name() == "contentaspect" || prop.Name() == "contentaspectname")
+    {
+      data4 = std::atoi(prop.param().c_str());
     }
   }
 
@@ -12690,6 +12940,11 @@ bool CGUIInfoManager::GetItemBool(const CGUIListItem* item, int contextWindow, i
 
 void CGUIInfoManager::ResetCache()
 {
+  // The content geometry a refresh serves is resolved once and held for the whole of it, so the
+  // ratio, the count and whether it varies cannot come from two resolutions either side of a
+  // change. A refresh ends here, so the snapshot expires here.
+  m_infoProviders.GetVideoInfoProvider().ResetContentGeometry();
+
   // mark our infobools as dirty
   std::unique_lock lock(m_critInfo);
   ++m_refreshCounter;

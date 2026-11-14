@@ -14,6 +14,7 @@
 #include "GUIDialogPictureInfo.h"
 #include "GUIPassword.h"
 #include "GUIWindowSlideShow.h"
+#include "MotionPhoto.h"
 #include "PictureInfoLoader.h"
 #include "ServiceBroker.h"
 #include "URL.h"
@@ -24,6 +25,7 @@
 #include "application/ApplicationPlayer.h"
 #include "dialogs/GUIDialogMediaSource.h"
 #include "dialogs/GUIDialogProgress.h"
+#include "filesystem/SourcesDirectory.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
 #include "input/actions/ActionIDs.h"
@@ -198,6 +200,8 @@ void CGUIWindowPictures::OnPrepareFileItems(CFileItemList& items)
   for (int i=0;i<items.Size();++i )
     if (StringUtils::EqualsNoCase(items[i]->GetLabel(), "folder.jpg"))
       items.Remove(i);
+
+  KODI::PICTURE::GroupLivePhotos(items);
 
   if (items.GetFolderCount() == items.Size() || !CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_PICTURES_USETAGS))
     return;
@@ -449,7 +453,8 @@ void CGUIWindowPictures::GetContextButtons(int itemNumber, CContextButtons &butt
 
   if (item)
   {
-    if ( m_vecItems->IsVirtualDirectoryRoot() || m_vecItems->GetPath() == "sources://pictures/" )
+    if (m_vecItems->IsVirtualDirectoryRoot() ||
+        m_vecItems->GetPath() == CSourcesDirectory::PathOf(MediaSection::PICTURES))
     {
       CGUIDialogContextMenu::GetContextButtons(MediaSection::PICTURES, item, buttons);
     }

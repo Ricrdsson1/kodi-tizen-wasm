@@ -48,34 +48,42 @@ bool ChooseAndSetNewName(CFileItem& item)
 
 bool ChooseAndSetNewThumbnail(CFileItem& item)
 {
+  auto& localizeStrings{CServiceBroker::GetResourcesComponent().GetLocalizeStrings()};
   CFileItemList prefilledItems;
   if (item.HasArt(KODI::ART::TYPE::THUMB))
   {
-    const auto current = std::make_shared<CFileItem>(KODI::IMAGE_CHOICE::CURRENT, false);
+    const auto current = std::make_shared<CFileItem>(KODI::ART::CHOICE::CURRENT, false);
     current->SetArt(KODI::ART::TYPE::THUMB, item.GetArt(KODI::ART::TYPE::THUMB));
-    current->SetLabel(
-        CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20016)); // Current thumb
+    current->SetLabel(localizeStrings.Get(20016)); // Current thumb
     prefilledItems.Add(current);
   }
 
-  const auto none = std::make_shared<CFileItem>(KODI::IMAGE_CHOICE::NONE, false);
+  const auto none = std::make_shared<CFileItem>(KODI::ART::CHOICE::NONE, false);
   none->SetArt(KODI::ART::TYPE::ICON, item.GetArt(KODI::ART::TYPE::ICON));
-  none->SetLabel(
-      CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20018)); // No thumb
+  none->SetLabel(localizeStrings.Get(20018)); // No thumb
   prefilledItems.Add(none);
 
   std::string thumb;
   std::vector<CMediaSource> sources;
   CServiceBroker::GetMediaManager().GetLocalDrives(sources);
   if (CGUIDialogFileBrowser::ShowAndGetImage(
-          prefilledItems, sources,
-          CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(1030),
+          prefilledItems, sources, localizeStrings.Get(1030),
           thumb)) // Browse for image
-  {
-    item.SetArt(KODI::ART::TYPE::THUMB, thumb);
-    return true;
-  }
+    return SetChosenThumbnail(item, thumb);
   return false;
+}
+
+bool SetChosenThumbnail(CFileItem& item, const std::string& choice)
+{
+  if (choice == KODI::ART::CHOICE::CURRENT)
+    return false;
+
+  const std::string thumb{choice == KODI::ART::CHOICE::NONE ? "" : choice};
+  if (item.GetArt(KODI::ART::TYPE::THUMB) == thumb)
+    return false;
+
+  item.SetArt(KODI::ART::TYPE::THUMB, thumb);
+  return true;
 }
 
 bool MoveItem(CFileItemList& items, const std::shared_ptr<CFileItem>& item, int amount)

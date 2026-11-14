@@ -68,6 +68,23 @@ namespace
 constexpr const char* GAME_PROPERTY_SUPPORTS_DISC_CONTROL = "supports_disc_control";
 constexpr const char* GAME_PROPERTY_PLATFORMS = "platforms";
 constexpr const char* GAME_PROPERTY_LIBRETRO_CORE = "libretro_core";
+constexpr const char* GAME_PROPERTY_SAVESTATE_FEATURES = "savestate_features";
+
+// Any other value is unknown, which RetroArch treats as deterministic
+CGameClient::SavestateFeatures ParseSavestateFeatures(const std::string& features)
+{
+  using SavestateFeatures = CGameClient::SavestateFeatures;
+  // libretro's core info rates a core without savestates "null"
+  if (features == "null" || features == "disabled")
+    return SavestateFeatures::DISABLED;
+  if (features == "basic")
+    return SavestateFeatures::BASIC;
+  if (features == "serialized")
+    return SavestateFeatures::SERIALIZED;
+  if (features == "deterministic")
+    return SavestateFeatures::DETERMINISTIC;
+  return SavestateFeatures::UNKNOWN;
+}
 
 /*!
  * \brief Holds a hardware-rendering client's context current for a call into it
@@ -160,6 +177,8 @@ CGameClient::CGameClient(const ADDON::AddonInfoPtr& addonInfo)
 
   m_libretroCore =
       addonInfo->Type(AddonType::GAMEDLL)->GetValue(GAME_PROPERTY_LIBRETRO_CORE).asString();
+  m_savestateFeatures = ParseSavestateFeatures(
+      addonInfo->Type(AddonType::GAMEDLL)->GetValue(GAME_PROPERTY_SAVESTATE_FEATURES).asString());
 }
 
 CGameClient::~CGameClient(void)
@@ -248,6 +267,7 @@ bool CGameClient::Initialize(void)
   m_ifc.game->toKodi->RCOnLeaderboardScoreboard = cb_rc_on_leaderboard_scoreboard;
   m_ifc.game->toKodi->RCOnReset = cb_rc_on_reset;
   m_ifc.game->toKodi->RCOnSubsetCompleted = cb_rc_on_subset_completed;
+  m_ifc.game->toKodi->RCOnAchievementSets = cb_rc_on_achievement_sets;
 
   memset(m_ifc.game->toAddon, 0, sizeof(KodiToAddonFuncTable_Game));
 
@@ -350,16 +370,6 @@ bool CGameClient::OpenFile(const CFileItem& file,
 
   error = loadGame();
 
-  if (error != GAME_ERROR_NO_ERROR && SupportsDiscControl() && Discs().HasPersistedState())
-  {
-    CLog::Log(LOGWARNING,
-              "GameClient: Load with persisted disc hint failed; retrying original source media");
-    Streams().Deinitialize();
-    Streams().Initialize(streamManager);
-    Discs().Initialize(path, false);
-    error = loadGame();
-  }
-
   if (error != GAME_ERROR_NO_ERROR)
   {
     NotifyError(error);
@@ -440,42 +450,18 @@ bool CGameClient::InitializeGameplay(const std::string& gamePath,
                                      RETRO::IStreamManager& streamManager,
                                      IGameInputCallback* input)
 {
-  bool gameInfoLoaded = LoadGameInfo();
-  if (SupportsDiscControl() && Discs().HasPersistedState() &&
-      (!gameInfoLoaded || !Discs().RestoreDiscList()))
-  {
-    CLog::Log(
-        LOGWARNING,
-        "GameClient: Startup with persisted disc state failed; reloading original source media");
-    if (!UnloadGame() || gamePath.empty())
-      return false;
+  // Whether frames can be run ahead is a property of the game as well as the
+  // client: a core may refuse for one game and not the next
+  m_speculativeSupported = true;
 
-    Streams().Deinitialize();
-    Streams().Initialize(streamManager);
-    Discs().Initialize(gamePath, false);
-    GAME_ERROR error = GAME_ERROR_FAILED;
-    try
-    {
-      CClientFrameScope hwScope(Streams());
-      if (hwScope.IsBound())
-        LogError(error = m_ifc.game->toAddon->LoadGame(m_ifc.game, gamePath.c_str()), "LoadGame()");
-    }
-    catch (...)
-    {
-      LogException("LoadGame()");
-    }
-    if (error != GAME_ERROR_NO_ERROR)
-      return false;
-    gameInfoLoaded = LoadGameInfo();
-  }
-
+  const bool gameInfoLoaded = LoadGameInfo();
   if (!gameInfoLoaded)
   {
     UnloadGame();
     return false;
   }
   if (SupportsDiscControl())
-    Discs().RefreshDiscStateLive();
+    Discs().RefreshDiscState();
 
   Input().Start(input);
 
@@ -483,9 +469,6 @@ bool CGameClient::InitializeGameplay(const std::string& gamePath,
   m_hasFrameRun = false;
   m_gamePath = gamePath;
   m_input = input;
-
-  if (SupportsDiscControl())
-    Discs().SaveDiscState();
 
   m_inGameSaves = std::make_unique<CGameClientInGameSaves>(this, m_ifc.game);
   m_inGameSaves->Load();
@@ -756,6 +739,51 @@ void CGameClient::PollInput()
     input->PollInput();
 }
 
+bool CGameClient::SupportsSpeculativeFrames() const
+{
+  return m_ifc.game->toAddon->RunFrameSpeculative != nullptr && m_speculativeSupported;
+}
+
+bool CGameClient::RunFrameSpeculative()
+{
+  if (!SupportsSpeculativeFrames())
+    return false;
+
+  std::unique_lock lock(m_critSection);
+
+  if (!m_bIsPlaying)
+    return false;
+
+  try
+  {
+    CClientFrameScope hwScope(Streams());
+    if (!hwScope.IsBound())
+      return false;
+
+    const GAME_ERROR error = m_ifc.game->toAddon->RunFrameSpeculative(m_ifc.game);
+    if (error == GAME_ERROR_NOT_IMPLEMENTED)
+    {
+      CLog::Log(LOGINFO, "GAME: {} can't run speculative frames", ID());
+      m_speculativeSupported = false;
+      return false;
+    }
+    if (!LogError(error, "RunFrameSpeculative()"))
+      return false;
+
+    const GAME_ERROR audioError = m_ifc.game->toAddon->AudioAvailable(m_ifc.game);
+    if (audioError != GAME_ERROR_NO_ERROR && audioError != GAME_ERROR_NOT_IMPLEMENTED)
+      LogError(audioError, "AudioAvailable()");
+
+    return true;
+  }
+  catch (...)
+  {
+    LogException("RunFrameSpeculative()");
+  }
+
+  return false;
+}
+
 void CGameClient::RunFrame(bool pollInput)
 {
   if (pollInput)
@@ -925,12 +953,7 @@ RestoreResult CGameClient::Deserialize(const uint8_t* data,
   if (bSuccess && SupportsDiscControl())
   {
     bSuccess = Discs().RestoreDiscList();
-    if (discState)
-    {
-      if (bSuccess && previousDiscs)
-        Discs().SaveDiscState();
-    }
-    else if (bSuccess)
+    if (bSuccess && !discState)
       Discs().RefreshDiscState();
   }
 
@@ -938,6 +961,68 @@ RestoreResult CGameClient::Deserialize(const uint8_t* data,
     restorePreviousDiscs();
   // Media rollback cannot undo machine memory changed by a failed deserialize.
   return bSuccess ? RestoreResult::Restored : RestoreResult::StateUncertain;
+}
+
+bool CGameClient::HasSpeculativeStates() const
+{
+  return m_ifc.game->toAddon->SerializeSpeculative != nullptr;
+}
+
+bool CGameClient::SerializeSpeculative(uint8_t* data, size_t size)
+{
+  if (m_ifc.game->toAddon->SerializeSpeculative == nullptr)
+    return Serialize(data, size);
+
+  if (data == nullptr || size == 0)
+    return false;
+
+  std::unique_lock lock(m_critSection);
+  if (!m_bIsPlaying)
+    return false;
+
+  try
+  {
+    // Refusing a state is expected while the client couldn't load it back, so
+    // it isn't logged as an error
+    CClientFrameScope hwScope(Streams());
+    if (hwScope.IsBound())
+      return m_ifc.game->toAddon->SerializeSpeculative(m_ifc.game, data, size) ==
+             GAME_ERROR_NO_ERROR;
+  }
+  catch (...)
+  {
+    LogException("SerializeSpeculative()");
+  }
+
+  return false;
+}
+
+bool CGameClient::RestoreState(const uint8_t* data, size_t size)
+{
+  if (data == nullptr || size == 0)
+    return false;
+
+  std::unique_lock lock(m_critSection);
+  if (!m_bIsPlaying)
+    return false;
+
+  try
+  {
+    CClientFrameScope hwScope(Streams());
+    if (hwScope.IsBound())
+    {
+      if (m_ifc.game->toAddon->DeserializeSpeculative != nullptr)
+        return LogError(m_ifc.game->toAddon->DeserializeSpeculative(m_ifc.game, data, size),
+                        "DeserializeSpeculative()");
+      return LogError(m_ifc.game->toAddon->Deserialize(m_ifc.game, data, size), "Deserialize()");
+    }
+  }
+  catch (...)
+  {
+    LogException("Deserialize()");
+  }
+
+  return false;
 }
 
 bool CGameClient::SerializeAchievementState(std::vector<uint8_t>& data)
@@ -1458,6 +1543,16 @@ void CGameClient::cb_rc_on_subset_completed(KODI_HANDLE kodiInstance, const char
     return;
 
   gameClient->Cheevos().OnSubsetCompleted(title != nullptr ? title : "");
+}
+
+void CGameClient::cb_rc_on_achievement_sets(KODI_HANDLE kodiInstance,
+                                            const game_rc_achievement_sets* data)
+{
+  CGameClient* gameClient = static_cast<CGameClient*>(kodiInstance);
+  if (gameClient == nullptr || data == nullptr)
+    return;
+
+  gameClient->Cheevos().OnAchievementSets(*data);
 }
 
 std::pair<std::string, std::string> CGameClient::ParseLibretroName(const std::string& addonName)

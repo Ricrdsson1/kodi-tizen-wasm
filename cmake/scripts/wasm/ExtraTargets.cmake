@@ -2,7 +2,8 @@
 set_property(TARGET ${APP_NAME_LC} APPEND PROPERTY LINK_DEPENDS
   ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/kodi_pre.js
   ${CMAKE_SOURCE_DIR}/xbmc/windowing/wasm/webgl_commit.js
-  ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/network/tizen_sockets.js)
+  ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/network/tizen_sockets.js
+  ${CMAKE_SOURCE_DIR}/xbmc/cores/VideoPlayer/DVDCodecs/Video/webcodecs_bridge.js)
 if(ENABLE_WASM_DEV_PROXY)
   set_property(TARGET ${APP_NAME_LC} APPEND PROPERTY LINK_DEPENDS
     ${CMAKE_SOURCE_DIR}/tools/wasm/dev_proxy_pre.js)
@@ -37,3 +38,5 @@ if(TARGET ${APP_NAME_LC}::Python)
     "SHELL:--preload-file ${PYTHON_STDLIB_VFS_DIR}@${WASM_VFS_PREFIX}/lib")
   set_property(TARGET ${APP_NAME_LC} APPEND PROPERTY LINK_DEPENDS "${PYTHON_STDLIB_ZIP}")
 endif()
+
+include(${CMAKE_SOURCE_DIR}/cmake/scripts/wasm/TizenTargets.cmake)

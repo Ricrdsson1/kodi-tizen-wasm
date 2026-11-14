@@ -23,6 +23,7 @@
 #include "windowing/GraphicContext.h"
 #include "windowing/WinSystem.h"
 
+#include <algorithm>
 #include <iomanip>
 #include <iterator>
 #include <memory>
@@ -54,7 +55,8 @@ CVideoPlayerVideo::CVideoPlayerVideo(CDVDClock* pClock,
     IDVDStreamPlayerVideo(processInfo),
     m_messageQueue("video"),
     m_messageParent(parent),
-    m_renderManager(renderManager)
+    m_renderManager(renderManager),
+    m_liveGeometry(parent, processInfo)
 {
   m_pClock = pClock;
   m_pOverlayContainer = pOverlayContainer;
@@ -238,7 +240,17 @@ void CVideoPlayerVideo::OpenStream(CDVDStreamInfo& hint, std::unique_ptr<CDVDVid
   m_rewindStalled = false;
   m_packets.clear();
   m_syncState = IDVDStreamPlayer::SYNC_STARTING;
+  ResetSeekDrop();
   m_renderManager.ShowVideo(false);
+  m_liveGeometry.OnStreamOpened();
+}
+
+void CVideoPlayerVideo::ResetSeekDrop()
+{
+  m_awaitingFirstKeptPacket = true;
+  m_seekDropping = false;
+  m_seekDropBeforePts = DVD_NOPTS_VALUE;
+  m_seekDroppedPictures = 0;
 }
 
 void CVideoPlayerVideo::CloseStream(bool bWaitForBuffers)
@@ -457,6 +469,7 @@ void CVideoPlayerVideo::Process()
       m_syncState = IDVDStreamPlayer::SYNC_STARTING;
       m_renderManager.ShowVideo(false);
       m_rewindStalled = false;
+      m_liveGeometry.OnFlush();
     }
     else if (pMsg->IsType(CDVDMsg::GENERAL_FLUSH)) // private message sent by (CVideoPlayerVideo::Flush())
     {
@@ -472,6 +485,7 @@ void CVideoPlayerVideo::Process()
       m_packets.clear();
       pts = 0;
       m_rewindStalled = false;
+      ResetSeekDrop();
 
       m_ptsTracker.Flush();
       //we need to recalculate the framerate
@@ -489,6 +503,7 @@ void CVideoPlayerVideo::Process()
 
       m_renderManager.DiscardBuffer();
       FlushMessages();
+      m_liveGeometry.OnFlush();
     }
     else if (pMsg->IsType(CDVDMsg::PLAYER_SETSPEED))
     {
@@ -545,6 +560,26 @@ void CVideoPlayerVideo::Process()
     {
       DemuxPacket* pPacket = std::static_pointer_cast<CDVDMsgDemuxerPacket>(pMsg)->GetPacket();
       bool bPacketDrop = std::static_pointer_cast<CDVDMsgDemuxerPacket>(pMsg)->GetPacketDrop();
+
+      // After a flush, VideoPlayer drops the packets before the target of an accurate seek.
+      // Decoders apply the drop flag to the pictures they output rather than to the packets
+      // they were decoded from, so a decoder with latency still outputs some of them.
+      if (m_awaitingFirstKeptPacket)
+      {
+        if (bPacketDrop)
+        {
+          m_seekDropping = true;
+        }
+        else
+        {
+          m_awaitingFirstKeptPacket = false;
+          if (m_seekDropping)
+          {
+            m_seekDropping = false;
+            m_seekDropBeforePts = pPacket->dts != DVD_NOPTS_VALUE ? pPacket->dts : pPacket->pts;
+          }
+        }
+      }
 
       if (m_stalled)
       {
@@ -779,6 +814,27 @@ bool CVideoPlayerVideo::ProcessDecoderOutput(double &frametime, double &pts)
       pts = m_picture.pts;
     }
 
+    // Drop the pictures before the first kept packet. Pictures output while packets are still
+    // being dropped all stem from dropped packets. A picture without a timestamp must not end
+    // this either, as it would report the stream as started without a start time.
+    if (m_seekDropping || m_seekDropBeforePts != DVD_NOPTS_VALUE)
+    {
+      constexpr int MAX_SEEK_DROPPED_PICTURES = 250;
+      const bool before = m_seekDropping || !hasTimestamp || m_picture.pts < m_seekDropBeforePts;
+      if (before && ++m_seekDroppedPictures <= MAX_SEEK_DROPPED_PICTURES)
+      {
+        m_picture.iFlags |= DVP_FLAG_DROPPED;
+      }
+      else
+      {
+        CLog::Log(LOGDEBUG, "CVideoPlayerVideo - dropped {} pictures before the seek target {:f}",
+                  std::min(m_seekDroppedPictures, MAX_SEEK_DROPPED_PICTURES), m_picture.pts);
+        m_awaitingFirstKeptPacket = false;
+        m_seekDropping = false;
+        m_seekDropBeforePts = DVD_NOPTS_VALUE;
+      }
+    }
+
     double extraDelay = 0.0;
     if (m_picture.iRepeatPicture)
     {
@@ -891,7 +947,7 @@ void CVideoPlayerVideo::ProcessOverlays(const VideoPicture* pSource, double pts)
   }
 }
 
-CVideoPlayerVideo::EOutputState CVideoPlayerVideo::OutputPicture(const VideoPicture* pPicture)
+CVideoPlayerVideo::EOutputState CVideoPlayerVideo::OutputPicture(VideoPicture* pPicture)
 {
   m_bAbortOutput = false;
 
@@ -992,6 +1048,8 @@ CVideoPlayerVideo::EOutputState CVideoPlayerVideo::OutputPicture(const VideoPict
 
     return OUTPUT_AGAIN;
   }
+
+  pPicture->contentRect = m_liveGeometry.OnPicture(*pPicture, m_hints, m_speed);
 
   ProcessOverlays(pPicture, pPicture->pts);
 

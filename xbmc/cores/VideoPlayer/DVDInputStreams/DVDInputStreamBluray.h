@@ -15,6 +15,7 @@
 #include "filesystem/UDFContext.h"
 #endif
 
+#include <atomic>
 #include <chrono>
 #include <list>
 #include <memory>
@@ -141,6 +142,25 @@ public:
    */
   bool IsDefaultStream(int pid) const;
 
+  struct ClipTime
+  {
+    uint64_t inTime{0};
+    uint64_t startTime{0};
+  };
+
+  uint64_t GetReadPos() const { return m_readPos; }
+
+  /*!
+   * \brief Get the in time and start time (90 kHz) of the clip a byte was read from.
+   * \param readPos The position of the byte in the bytes Read returned since Open
+   * \return The clip time, or nothing without a clip and in navigation mode
+   */
+  std::optional<ClipTime> GetClipTime(uint64_t readPos) const;
+
+  //! hand the clip start held at a join to the demuxer opened after it
+  void ReleaseClipStart() { m_clipStartHeld = false; }
+  bool IsClipStartHeld() const { return !m_navmode && m_clipStartHeld && !m_clipStart.empty(); }
+
   void OverlayCallback(const BD_OVERLAY * const);
 #ifdef HAVE_LIBBLURAY_BDJ
   void OverlayCallbackARGB(const struct bd_argb_overlay_s * const);
@@ -193,14 +213,19 @@ protected:
   };
 
   SPlane m_planes[2];
-  enum EHoldState {
+  enum EHoldState
+  {
     HOLD_NONE = 0,
     HOLD_HELD,
     HOLD_DATA,
     HOLD_STILL,
     HOLD_ERROR,
-    HOLD_EXIT
   } m_hold = HOLD_NONE;
+  //! Set by Abort() from the thread closing the player. Kept apart from m_hold, which playback
+  //! events overwrite
+  std::atomic<bool> m_aborted{false};
+  //! Units libbluray has failed to read since it last returned data
+  unsigned int m_readErrors = 0;
   BD_EVENT m_event;
 #ifdef HAVE_LIBBLURAY_BDJ
   struct bd_argb_buffer_s m_argb;
@@ -211,6 +236,14 @@ protected:
     void SetupPlayerSettings();
     void FreeTitleInfo();
     void FreeClipInfo();
+    void HoldClipStart(const uint8_t* buf, int size);
+    void DropClipStartOnJump();
+
+    /*!
+     * \brief Whether so many reads in a row have failed that the disc is taken to have gone.
+     * Only a successful read clears it, so no read is attempted once it is true.
+     */
+    bool HasGivenUpReading() const;
 
     /*!
      * \brief Read the clip information of a play item of the playlist being played.
@@ -233,6 +266,8 @@ protected:
      * \return True if the clip carries the stream, false otherwise
      */
     bool GetClipStreamLanguage(int pid, std::string& language) const;
+    void OpenClipSpan();
+
     std::unique_ptr<CDVDInputStreamFile> m_pstream;
     std::string m_rootPath;
 
@@ -250,4 +285,17 @@ protected:
     std::chrono::steady_clock::time_point m_startWatchTime{};
     std::vector<PlaylistInformation> m_playedPlaylists;
     CCriticalSection m_statesLock;
+
+    struct ClipSpan
+    {
+      uint64_t readPos{0};
+      std::optional<ClipTime> time{};
+    };
+
+    uint64_t m_readPos{0};
+    std::vector<ClipSpan> m_clipSpans;
+    std::vector<uint8_t> m_clipStart;
+    size_t m_clipStartOffset{0};
+    bool m_clipStartHeld{false};
+    uint64_t m_clipStartEnd{0};
 };

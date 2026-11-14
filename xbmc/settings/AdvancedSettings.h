@@ -189,6 +189,9 @@ class CAdvancedSettings : public ISettingCallback, public ISettingsHandler
     int m_musicPercentSeekBackwardBig;
     int m_videoIgnoreSecondsAtStart;
     float m_videoIgnorePercentAtEnd;
+
+    //! \brief Share of a title's samples a second shape needs before content counts as varying.
+    float m_videoContentGeometryVariesShare;
     float m_audioApplyDrc;
     unsigned int m_maxPassthroughOffSyncDuration = 50; // when 50 ms off adjust
     bool m_AllowMultiChannelFloat = false; // Android only switch to be removed in v22
@@ -204,6 +207,7 @@ class CAdvancedSettings : public ISettingCallback, public ISettingsHandler
     bool m_DXVACheckCompatibility;
     bool m_DXVACheckCompatibilityPresent;
     int  m_videoFpsDetect;
+    float m_gamesPacingMarginMs;
     float m_maxTempo;
     bool m_videoPreferStereoStream = false;
 

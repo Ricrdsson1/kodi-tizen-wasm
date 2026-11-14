@@ -17,6 +17,7 @@
 #include "dialogs/GUIDialogMediaSource.h"
 #include "dialogs/GUIDialogYesNo.h"
 #include "filesystem/Directory.h"
+#include "filesystem/SourcesDirectory.h"
 #include "filesystem/VideoDatabaseDirectory.h"
 #include "filesystem/VideoDatabaseDirectory/DirectoryNode.h"
 #include "filesystem/VideoDatabaseDirectory/QueryParams.h"
@@ -596,11 +597,11 @@ void CGUIWindowVideoNav::UpdateButtons()
     {
       CFileItemPtr pItem = m_vecItems->Get(i);
       if (pItem->IsParentFolder()) iItems--;
-      if (StringUtils::StartsWith(pItem->GetPath(), "/-1/")) iItems--;
+      if (StringUtils::EndsWith(pItem->GetPath(), "/-1/")) iItems--;
     }
     // or the last item
     if (m_vecItems->Size() > 2 &&
-      StringUtils::StartsWith(m_vecItems->Get(m_vecItems->Size()-1)->GetPath(), "/-1/"))
+      StringUtils::EndsWith(m_vecItems->Get(m_vecItems->Size()-1)->GetPath(), "/-1/"))
       iItems--;
   }
   std::string items = StringUtils::Format(
@@ -620,7 +621,7 @@ void CGUIWindowVideoNav::UpdateButtons()
     std::string strDummy;
     URIUtils::Split(m_vecItems->GetPath(), strDummy, strLabel);
   }
-  else if (m_vecItems->IsPath("sources://video/"))
+  else if (m_vecItems->IsPath(CSourcesDirectory::PathOf(MediaSection::VIDEO)))
     strLabel = CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(744);
   // everything else is from a videodb:// path
   else if (VIDEO::IsVideoDb(*m_vecItems))
@@ -729,7 +730,8 @@ void CGUIWindowVideoNav::OnDeleteItem(const CFileItemPtr& pItem)
   if (!VIDEO::IsVideoDb(*m_vecItems) && !VIDEO::IsVideoDb(*pItem))
   {
     if (!pItem->IsPath(std::string{ITEM::PLACEHOLDER::NEW_SMART_PLAYLIST} + "video") &&
-        !pItem->IsPath("special://videoplaylists/") && !pItem->IsPath("sources://video/") &&
+        !pItem->IsPath("special://videoplaylists/") &&
+        !pItem->IsPath(CSourcesDirectory::PathOf(MediaSection::VIDEO)) &&
         !URIUtils::IsProtocol(pItem->GetPath(), "newtag"))
       CGUIWindowVideoBase::OnDeleteItem(pItem);
   }
@@ -797,7 +799,7 @@ void CGUIWindowVideoNav::GetContextButtons(int itemNumber, CContextButtons &butt
   {
     // nothing to do here
   }
-  else if (m_vecItems->IsPath("sources://video/"))
+  else if (m_vecItems->IsPath(CSourcesDirectory::PathOf(MediaSection::VIDEO)))
   {
     // get the usual shares
     CGUIDialogContextMenu::GetContextButtons(MediaSection::VIDEO, item, buttons);
@@ -943,10 +945,17 @@ bool CGUIWindowVideoNav::OnContextButton(int itemNumber, CONTEXT_BUTTON button)
   {
   case CONTEXT_BUTTON_EDIT:
     {
-      const CONTEXT_BUTTON ret{
-          static_cast<CONTEXT_BUTTON>(CGUIDialogVideoInfo::ManageVideoItem(item))};
+      // the dialogs change the list item, which the loader thread writes
+      const CBackgroundInfoLoader::CItemHold itemHold{m_thumbLoader, item.get()};
+      const int ret{CGUIDialogVideoInfo::ManageVideoItem(item)};
 
-      if (ret != CONTEXT_BUTTON_CANCELLED)
+      // changed art of a movie only needs its own list item updated
+      if (ret == CONTEXT_BUTTON_SET_ART && item->HasVideoInfoTag() &&
+          UpdateMovieListItem(item->GetPath(), item->GetVideoInfoTag()->m_strFileNameAndPath, *item,
+                              false, nullptr))
+        return true;
+
+      if (ret >= 0)
       {
         Refresh(true);
         if (ret == CONTEXT_BUTTON_DELETE)
@@ -959,6 +968,7 @@ bool CGUIWindowVideoNav::OnContextButton(int itemNumber, CONTEXT_BUTTON button)
     }
     case CONTEXT_BUTTON_SET_ART:
     {
+      const CBackgroundInfoLoader::CItemHold itemHold{m_thumbLoader, item.get()};
       const bool result{
           CGUIDialogVideoInfo::ChooseAndManageVideoItemArtwork(m_vecItems->Get(itemNumber))};
       Refresh();
@@ -1088,7 +1098,7 @@ bool CGUIWindowVideoNav::OnClick(int iItem, const std::string &player)
 std::string CGUIWindowVideoNav::GetStartFolder(const std::string &dir)
 {
   static const auto map = std::map<std::string, std::string>{
-      {"files", "sources://video/"},
+      {"files", CSourcesDirectory::PathOf(MediaSection::VIDEO)},
       {"inprogresstvshows", VIDEO::DB_PATH::INPROGRESS_TVSHOWS},
       {"movieactors", VIDEO::DB_PATH::MOVIE_ACTORS},
       {"moviecountries", VIDEO::DB_PATH::MOVIE_COUNTRIES},

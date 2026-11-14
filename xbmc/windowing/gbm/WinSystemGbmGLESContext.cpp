@@ -141,7 +141,8 @@ void CWinSystemGbmGLESContext::PresentRender(bool rendered, bool videoLayer)
 
   if (rendered || videoLayer)
   {
-    bool async = !videoLayer && m_eglFence;
+    // A frame committed without waiting reaches the screen a vblank later
+    bool async = !videoLayer && m_eglFence && !m_lowLatencyPresentation;
     if (rendered)
     {
 #if defined(EGL_ANDROID_native_fence_sync) && defined(EGL_KHR_fence_sync)
@@ -258,11 +259,11 @@ bool CWinSystemGbmGLESContext::BeginGuiComposite(bool guiWillRender)
       return false;
     }
 
-    if (GetEnabledFrontToBackRendering() && !m_guiFbo.AttachDepthBuffer(width, height))
+    if (!m_guiFbo.AttachDepthBuffer(width, height))
     {
       CLog::Log(LOGERROR,
-                "CWinSystemGbmGLESContext: failed to attach depth buffer to GUI FBO {}x{}", width,
-                height);
+                "CWinSystemGbmGLESContext: failed to attach depth/stencil buffer to GUI FBO {}x{}",
+                width, height);
       m_guiFbo.Cleanup();
       return false;
     }

@@ -39,16 +39,12 @@ option(ENABLE_WASM_DEV_PROXY "Route cross-origin requests through tools/wasm/ser
 # Threading + memory (COOP/COEP headers required in HTML for pthreads).
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   add_link_options(
-    "SHELL:-sUSE_PTHREADS=1"
+    "-pthread"
+    "SHELL:-sMIN_CHROME_VERSION=85"
     "SHELL:-sPTHREAD_POOL_SIZE=16"
     "SHELL:-sAUDIO_WORKLET"
     "SHELL:-sWASM_WORKERS"
     "SHELL:-sINITIAL_MEMORY=512MB"
-    # Emscripten's getHeapMax() (src/lib/libcore.js) caps this at
-    # 4GB - WASM_PAGE_SIZE on non-MEMORY64 builds, so emscripten_get_heap_max()
-    # never actually wraps to 0 despite the literal 4GB here.
-    "SHELL:-sMAXIMUM_MEMORY=4GB"
-    "SHELL:-sALLOW_MEMORY_GROWTH=1"
     "SHELL:-sSTACK_SIZE=5MB"
     "SHELL:-sPROXY_TO_PTHREAD"
     "SHELL:-sMIN_WEBGL_VERSION=2"
@@ -66,6 +62,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     # BSD sockets over the Tizen Sockets Extension; falls back to the upstream
     # implementation in ordinary browsers.
     "SHELL:--js-library ${CMAKE_SOURCE_DIR}/xbmc/platform/wasm/network/tizen_sockets.js"
+    "SHELL:--js-library ${CMAKE_SOURCE_DIR}/xbmc/cores/VideoPlayer/DVDCodecs/Video/webcodecs_bridge.js"
   )
 
   # tizen_sockets.js returns one getaddrinfo() node per address, and older
@@ -86,8 +83,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   #   - Exception catching enabled: C++ exceptions surface with a message
   #     rather than silently aborting.
   #
-  # Release mode: assertions stay at level 1 (cheap; useful while the port is
-  # still maturing) and the optimiser is left to Emscripten/CMake defaults.
+  # Release mode: Emscripten/CMake defaults, which disable assertions in
+  # optimized builds.
   # ---------------------------------------------------------------------------
   if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_compile_options(-g -O0)
@@ -100,8 +97,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
       "SHELL:--source-map-base=http://localhost:8080/"
     )
     message(STATUS "WASM: Debug build — SAFE_HEAP + DWARF symbols + source maps enabled")
-  else()
-    add_link_options("SHELL:-sASSERTIONS=1")
   endif()
 
   if(ENABLE_WASM_PROFILING)
@@ -132,4 +127,5 @@ set(ENABLE_DVDCSS OFF CACHE BOOL "libdvdcss disabled for WASM" FORCE)
 set(ENABLE_AIRTUNES OFF CACHE BOOL "AirTunes not available in browser" FORCE)
 set(ENABLE_EVENTCLIENTS OFF CACHE BOOL "Event clients not used for WASM" FORCE)
 set(ENABLE_INTERNAL_FFMPEG ON CACHE BOOL "No system FFmpeg for Emscripten" FORCE)
+set(ENABLE_INTERNAL_OPUS ON CACHE BOOL "Enable internal opus?")
 

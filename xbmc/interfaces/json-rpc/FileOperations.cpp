@@ -29,6 +29,7 @@
 #include "utils/URIUtils.h"
 #include "utils/Variant.h"
 #include "video/VideoDatabase.h"
+#include "video/VideoUtils.h"
 #include "video/windows/GUIWindowVideoBase.h"
 
 #include <memory>
@@ -135,7 +136,7 @@ JSONRPC_STATUS CFileOperations::GetDirectory(const std::string &method, ITranspo
 
       if ((media == "video" && items[i]->HasVideoInfoTag()) ||
           (media == "music" && items[i]->HasMusicInfoTag()) ||
-          (media == "picture" && items[i]->HasPictureInfoTag()) ||
+          (media == "pictures" && items[i]->HasPictureInfoTag()) ||
            media == "files" ||
            URIUtils::IsUPnP(items.GetPath()))
           filteredFiles.Add(items[i]);
@@ -267,6 +268,8 @@ JSONRPC_STATUS CFileOperations::SetFileDetails(const std::string &method, ITrans
     playcount = parameterObject["playcount"].asInteger();
   if (playcount != infos.GetPlayCount() || lastPlayed != infos.m_lastPlayed)
     videodatabase.SetPlayCount(CFileItem(infos), playcount, lastPlayed);
+  if (playcount != infos.GetPlayCount())
+    VIDEO::UTILS::AnnouncePlayCountChanged(file, playcount);
 
   CVideoLibrary::UpdateResumePoint(parameterObject, infos, videodatabase);
 

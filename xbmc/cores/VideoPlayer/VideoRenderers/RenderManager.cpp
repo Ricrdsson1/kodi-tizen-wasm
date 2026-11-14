@@ -232,6 +232,7 @@ bool CRenderManager::Configure()
     m_clockSync.Reset();
     m_dvdClock.SetVsyncAdjust(0);
     m_overlays.Reset();
+    OVERLAY::MarkDirty();
     m_overlays.SetStereoMode(m_picture.stereoMode);
 
     m_renderState = STATE_CONFIGURED;
@@ -508,6 +509,15 @@ void CRenderManager::DeleteRenderer()
   }
 }
 
+bool CRenderManager::CompositeVideoCapture(KODI::RENDERING::CAPTURE::CaptureResult& result)
+{
+  std::unique_lock lock(m_statelock);
+  if (m_renderState != STATE_CONFIGURED || !m_pRenderer)
+    return true;
+
+  return m_pRenderer->CompositeVideoCapture(result);
+}
+
 void CRenderManager::ServiceVideoCaptures()
 {
   using namespace KODI::RENDERING::CAPTURE;
@@ -619,6 +629,8 @@ void CRenderManager::Render(bool clear, DWORD flags, DWORD alpha, bool gui)
   {
     SPresent& m = m_Queue[m_presentsource];
 
+    m_pRenderer->SetFrameContentRect(m.contentRect);
+
     if( m.presentmethod == PRESENT_METHOD_BOB )
       PresentFields(clear, flags, alpha);
     else if( m.presentmethod == PRESENT_METHOD_BLEND )
@@ -664,7 +676,7 @@ void CRenderManager::Render(bool clear, DWORD flags, DWORD alpha, bool gui)
       {
         DEBUG_INFO_PLAYER info;
 
-        m_playerPort->GetDebugInfo(info.audio, info.video, info.player);
+        m_playerPort->GetDebugInfo(info);
 
         double refreshrate, clockspeed;
         int missedvblanks;
@@ -920,6 +932,7 @@ bool CRenderManager::AddVideoPicture(const VideoPicture& picture, volatile std::
   m.presentfield = displayField;
   m.presentmethod = presentmethod;
   m.pts = picture.pts;
+  m.contentRect = picture.contentRect;
   m_queued.push_back(m_free.front());
   m_free.pop_front();
   m_playerPort->UpdateRenderBuffers(m_queued.size(), m_discard.size(), m_free.size());

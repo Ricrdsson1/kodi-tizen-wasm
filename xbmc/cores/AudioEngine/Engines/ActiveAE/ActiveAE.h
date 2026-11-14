@@ -85,6 +85,7 @@ public:
     MUTE,
     VOLUME,
     PAUSESTREAM,
+    HOLDSTREAM,
     RESUMESTREAM,
     FLUSHSTREAM,
     STREAMRGAIN,
@@ -300,6 +301,7 @@ protected:
   float GetMaxDelay() { return m_stats.GetMaxDelay(); }
   void FlushStream(CActiveAEStream *stream);
   void PauseStream(CActiveAEStream *stream, bool pause);
+  void HoldStream(CActiveAEStream* stream);
   void StopSound(CActiveAESound *sound);
   void SetStreamAmplification(CActiveAEStream *stream, float amplify);
   void SetStreamReplaygain(CActiveAEStream *stream, float rgain);
@@ -330,7 +332,7 @@ protected:
   CActiveAEStream* CreateStream(MsgStreamNew *streamMsg);
   void DiscardStream(CActiveAEStream *stream);
   void SFlushStream(CActiveAEStream *stream);
-  void FlushEngine();
+  void FlushEngine(bool discardOutput = false);
   void ClearDiscardedBuffers();
   void SStopSound(CActiveAESound *sound);
   void DiscardSound(CActiveAESound *sound);
@@ -340,6 +342,7 @@ protected:
   bool RunStages();
   bool HasWork();
   CSampleBuffer* SyncStream(CActiveAEStream *stream);
+  bool IsTrueHDPassthrough() const;
 
   void ResampleSounds();
   bool ResampleSound(CActiveAESound *sound);

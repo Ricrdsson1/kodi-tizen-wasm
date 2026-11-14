@@ -17,6 +17,7 @@
 #include "cores/RetroPlayer/savestates/SavestateDatabase.h"
 #include "cores/RetroPlayer/savestates/SavestateFlatBuffer.h"
 #include "cores/RetroPlayer/streams/IStreamManager.h"
+#include "cores/RetroPlayer/streams/RetroPlayerAudio.h"
 #include "cores/RetroPlayer/streams/RetroPlayerRendering.h"
 #include "cores/RetroPlayer/streams/RetroPlayerVideo.h"
 #include "filesystem/File.h"
@@ -26,7 +27,6 @@
 #include "games/addons/GameClientInGameSaves.h"
 #include "games/addons/GameClientProperties.h"
 #include "games/addons/cheevos/GameClientCheevos.h"
-#include "games/addons/disc/GameClientDiscs.h"
 #include "games/addons/streams/GameClientStreams.h"
 #include "settings/Settings.h"
 #include "settings/SettingsComponent.h"
@@ -42,6 +42,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -134,20 +135,6 @@ struct InitializeGameplay
 };
 template struct MemberAccess<InitializeGameplay, &CGameClient::InitializeGameplay>;
 
-struct SupportsDiscs
-{
-  using Type = bool CGameClient::*;
-  friend Type GetMember(SupportsDiscs);
-};
-template struct MemberAccess<SupportsDiscs, &CGameClient::m_supportsDiscControl>;
-
-struct PersistedDiscs
-{
-  using Type = bool CGameClientDiscs::*;
-  friend Type GetMember(PersistedDiscs);
-};
-template struct MemberAccess<PersistedDiscs, &CGameClientDiscs::m_hasPersistedState>;
-
 struct Initialized
 {
   using Type = bool ADDON::CAddonDll::*;
@@ -182,6 +169,13 @@ struct Core
   unsigned int unloads{0};
   unsigned int loads{0};
   unsigned int readyFrame{1};
+  unsigned int speculativeFrames{0};
+  GAME_ERROR speculativeResult{GAME_ERROR_NO_ERROR};
+  //! Run-ahead states to refuse before giving one
+  unsigned int refusedStates{0};
+  bool deserializeFails{false};
+  //! Restores fail once a speculative frame has run
+  bool deserializeFailsAhead{false};
   bool serializationNeedsReset{false};
   bool deserializeNeedsFrame{false};
   GAME_ERROR frameResult{GAME_ERROR_NO_ERROR};
@@ -336,6 +330,11 @@ public:
 
   std::string LibretroCore() const { return m_addon->LibretroCore(); }
 
+  bool InstalledSpeculativeFrames() const
+  {
+    return m_addonCallbacks.RunFrameSpeculative != nullptr;
+  }
+
 private:
   AddonGlobalInterface* m_previous;
   AddonToKodiFuncTable_Game m_callbacks{};
@@ -397,12 +396,32 @@ protected:
       *data = 1;
       return GAME_ERROR_NO_ERROR;
     };
+    callbacks->SerializeSpeculative = [](const AddonInstance_Game* game, uint8_t* data, size_t)
+    {
+      auto& core = GetCore(game);
+      ++core.serializations;
+      if (core.refusedStates > 0)
+      {
+        --core.refusedStates;
+        return GAME_ERROR_FAILED;
+      }
+      *data = 1;
+      return GAME_ERROR_NO_ERROR;
+    };
     callbacks->Deserialize = [](const AddonInstance_Game* game, const uint8_t*, size_t)
     {
       auto& core = GetCore(game);
       ++core.deserializations;
+      if (core.deserializeFails || (core.deserializeFailsAhead && core.speculativeFrames > 0))
+        return GAME_ERROR_FAILED;
       return !core.deserializeNeedsFrame || core.frames > 0 ? GAME_ERROR_NO_ERROR
                                                             : GAME_ERROR_FAILED;
+    };
+    callbacks->RunFrameSpeculative = [](const AddonInstance_Game* game)
+    {
+      auto& core = GetCore(game);
+      ++core.speculativeFrames;
+      return core.speculativeResult;
     };
     callbacks->DeserializeAchievements = [](const AddonInstance_Game*, const uint8_t*, size_t)
     { return GAME_ERROR_NOT_IMPLEMENTED; };
@@ -523,7 +542,8 @@ protected:
     ASSERT_TRUE(database.AddSavestate(path, {}, savestate));
     {
       RETRO::CReversiblePlayback playback(m_client.get(), environment.Renderer(),
-                                          environment.Messenger(), 60.0, 0);
+                                          environment.Streams(), environment.Messenger(),
+                                          environment.ProcessInfo().GetDisplayPacing(), 60.0, 0);
       EXPECT_EQ(m_core.sizeQueries, 0U);
       EXPECT_TRUE(playback.LoadSavestate(path));
       EXPECT_EQ(m_core.frames, 0U);
@@ -686,50 +706,6 @@ TEST_F(TestGameClientHardwareRendering, FailedGameplayInitializationStillUnloads
     EXPECT_FALSE(HasStreams(m_client->Streams()));
   }
   EXPECT_EQ(state.deleted, 2U);
-}
-
-TEST_F(TestGameClientHardwareRendering, PersistedDiscRetryUnloadsWithoutContextBeforeReload)
-{
-  if (!HARDWARE_API_SUPPORTED)
-    GTEST_SKIP() << "This build has no supported hardware rendering API";
-
-  RETRO::CPlaybackTestEnvironment environment;
-  ProcessInfo process;
-  StreamState state;
-  UseRenderingStream(environment, process, state);
-  m_client.get()->*GetMember(Playing{}) = false;
-  m_client.get()->*GetMember(SupportsDiscs{}) = true;
-  m_client->Discs().*GetMember(PersistedDiscs{}) = true;
-  ASSERT_TRUE(Negotiate());
-  ASSERT_NE(OpenHardwareStream(), nullptr);
-  std::vector<std::string> events;
-  state.onClose = [&] { events.emplace_back("close"); };
-  m_core.onUnload = [&]
-  {
-    events.emplace_back("unload");
-    m_manager.bind = true;
-  };
-  m_core.onLoad = [&]
-  {
-    events.emplace_back("reload");
-    EXPECT_EQ(m_core.unloads, 1U);
-    EXPECT_EQ(m_core.destroys, 0U);
-    EXPECT_EQ(state.deleted, 1U);
-    EXPECT_FALSE(HasStreams(m_client->Streams()));
-    return GAME_ERROR_FAILED;
-  };
-  m_client->GetInstanceInterface()->toAddon->LoadGame =
-      [](const AddonInstance_Game* game, const char*) { return GetCore(game).onLoad(); };
-  m_manager.bind = false;
-
-  EXPECT_FALSE((m_client.get()->*GetMember(InitializeGameplay{}))("game.rom", m_manager, nullptr));
-  m_client->Streams().Deinitialize();
-  m_client->CloseFile();
-
-  EXPECT_EQ(events, (std::vector<std::string>{"unload", "close", "reload"}));
-  EXPECT_EQ(m_core.unloads, 1U);
-  EXPECT_EQ(m_core.destroys, 0U);
-  EXPECT_FALSE(m_client->IsPlaying());
 }
 
 TEST_F(TestGameClientHardwareRendering, FailedBindDoesNotInvokeClientOrRestoreAnotherScope)
@@ -1105,6 +1081,13 @@ public:
 
   bool Hardcore() const { return m_settings->GetBool("gamesachievements.hardcore"); }
 
+  // Another achievements setting changing, which reaches the client the same way
+  void ChangeEncore()
+  {
+    CServiceBroker::GetGameServices().GameSettings().OnSettingChanged(
+        m_settings->GetSetting("gamesachievements.encore"));
+  }
+
 private:
   const std::shared_ptr<CSettings> m_settings;
   const bool m_hardcore;
@@ -1112,29 +1095,38 @@ private:
   const std::string m_token;
 };
 
+// How many times a client has been asked for hardcore
+int hardcoreRequests = 0;
+
 // A client that plays on in casual mode whenever it is asked for hardcore
 void RefuseHardcore(KodiToAddonFuncTable_Game& callbacks)
 {
   callbacks.SetRetroAchievementsCredentials = [](const AddonInstance_Game*, const char*,
                                                  const char*) { return GAME_ERROR_NO_ERROR; };
   callbacks.RCSetHardcoreEnabled = [](const AddonInstance_Game*, bool enabled)
-  { return enabled ? GAME_ERROR_REJECTED : GAME_ERROR_NO_ERROR; };
+  {
+    if (!enabled)
+      return GAME_ERROR_NO_ERROR;
+    ++hardcoreRequests;
+    return GAME_ERROR_REJECTED;
+  };
   callbacks.RCSetEncoreModeEnabled = [](const AddonInstance_Game*, bool)
   { return GAME_ERROR_NO_ERROR; };
 }
 } // namespace
 
-TEST_F(TestGameClientHardwareRendering, HardcoreTurnsOffWhenRefusedAtSignIn)
+TEST_F(TestGameClientHardwareRendering, HardcoreRefusedAtSignInOnlyLeavesThisGame)
 {
   RETRO::CPlaybackTestEnvironment environment;
   CHardcoreSettings settings(true);
   RefuseHardcore(*m_client->GetInstanceInterface()->toAddon);
 
   EXPECT_TRUE(m_client->Cheevos().SendCredentials());
-  EXPECT_FALSE(settings.Hardcore());
+  EXPECT_FALSE(m_client->Cheevos().IsHardcoreActive());
+  EXPECT_TRUE(settings.Hardcore());
 }
 
-TEST_F(TestGameClientHardwareRendering, HardcoreTurnsOffWhenRefusedDuringPlay)
+TEST_F(TestGameClientHardwareRendering, HardcoreRefusedDuringPlayOnlyLeavesThisGame)
 {
   RETRO::CPlaybackTestEnvironment environment;
   CHardcoreSettings settings(false);
@@ -1143,9 +1135,46 @@ TEST_F(TestGameClientHardwareRendering, HardcoreTurnsOffWhenRefusedDuringPlay)
   m_client->Cheevos().ObserveSettings();
 
   settings.SetHardcore(true);
-  EXPECT_FALSE(settings.Hardcore());
+  EXPECT_FALSE(m_client->Cheevos().IsHardcoreActive());
+  EXPECT_TRUE(settings.Hardcore());
 
   m_client->Cheevos().StopObservingSettings();
+}
+
+TEST_F(TestGameClientHardwareRendering, RefusedHardcoreIsAskedForAgainOnlyWhenTurnedBackOn)
+{
+  RETRO::CPlaybackTestEnvironment environment;
+  CHardcoreSettings settings(true);
+  RefuseHardcore(*m_client->GetInstanceInterface()->toAddon);
+  ASSERT_TRUE(m_client->Cheevos().SendCredentials());
+  m_client->Cheevos().ObserveSettings();
+  const int requests = hardcoreRequests;
+
+  settings.ChangeEncore();
+  EXPECT_EQ(hardcoreRequests, requests);
+
+  settings.SetHardcore(false);
+  settings.SetHardcore(true);
+  EXPECT_EQ(hardcoreRequests, requests + 1);
+  EXPECT_FALSE(m_client->Cheevos().IsHardcoreActive());
+
+  m_client->Cheevos().StopObservingSettings();
+}
+
+TEST_F(TestGameClientHardwareRendering, LeavingHardcoreKeepsTheSetting)
+{
+  RETRO::CPlaybackTestEnvironment environment;
+  CHardcoreSettings settings(true);
+  auto& callbacks = *m_client->GetInstanceInterface()->toAddon;
+  RefuseHardcore(callbacks);
+  callbacks.RCSetHardcoreEnabled = [](const AddonInstance_Game*, bool)
+  { return GAME_ERROR_NO_ERROR; };
+  ASSERT_TRUE(m_client->Cheevos().SendCredentials());
+  ASSERT_TRUE(m_client->Cheevos().IsHardcoreActive());
+
+  m_client->Cheevos().LeaveHardcore();
+  EXPECT_FALSE(m_client->Cheevos().IsHardcoreActive());
+  EXPECT_TRUE(settings.Hardcore());
 }
 
 TEST_F(TestGameClientHardwareRendering, RewindRetriesUntilSerializationBecomesAvailable)
@@ -1157,7 +1186,8 @@ TEST_F(TestGameClientHardwareRendering, RewindRetriesUntilSerializationBecomesAv
   m_core.readyFrame = 3;
   {
     RETRO::CReversiblePlayback playback(m_client.get(), environment.Renderer(),
-                                        environment.Messenger(), 60.0, 0);
+                                        environment.Streams(), environment.Messenger(),
+                                        environment.ProcessInfo().GetDisplayPacing(), 60.0, 0);
     playback.FrameEvent();
     playback.FrameEvent();
     EXPECT_EQ(m_core.serializations, 0U);
@@ -1197,6 +1227,228 @@ TEST_F(TestGameClientHardwareRendering, DevKitReadsTheLibretroCoreFromNewerKodi)
   }
   DevKitInstance addon(m_client->Streams(), "8.2.1", "test_libretro");
   EXPECT_EQ(addon.LibretroCore(), "test_libretro");
+}
+
+namespace
+{
+// Turns run-ahead on for one test, and puts the settings back after it
+class CRunaheadSettings
+{
+public:
+  explicit CRunaheadSettings(bool rewind)
+    : m_settings(CServiceBroker::GetSettingsComponent()->GetSettings()),
+      m_rewind(m_settings->GetBool("gamesgeneral.enablerewind")),
+      m_runahead(m_settings->GetBool("gamesgeneral.enablerunahead")),
+      m_frames(m_settings->GetInt("gamesgeneral.runaheadframes"))
+  {
+    m_settings->SetBool("gamesgeneral.enablerewind", rewind);
+    m_settings->SetBool("gamesgeneral.enablerunahead", true);
+    m_settings->SetInt("gamesgeneral.runaheadframes", 2);
+  }
+
+  ~CRunaheadSettings()
+  {
+    m_settings->SetInt("gamesgeneral.runaheadframes", m_frames);
+    m_settings->SetBool("gamesgeneral.enablerunahead", m_runahead);
+    m_settings->SetBool("gamesgeneral.enablerewind", m_rewind);
+  }
+
+private:
+  const std::shared_ptr<CSettings> m_settings;
+  const bool m_rewind;
+  const bool m_runahead;
+  const int m_frames;
+};
+} // namespace
+
+TEST_F(TestGameClientHardwareRendering, RunaheadRestoresTheRealFrame)
+{
+  RETRO::CPlaybackTestEnvironment environment;
+  CRunaheadSettings runahead(true);
+  RETRO::CReversiblePlayback playback(m_client.get(), environment.Renderer(), environment.Streams(),
+                                      environment.Messenger(),
+                                      environment.ProcessInfo().GetDisplayPacing(), 60.0, 0);
+  playback.SetSpeed(1.0);
+
+  // The state size is unknown until the client has run a frame
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.frames, 1U);
+  EXPECT_EQ(m_core.serializations, 1U);
+  EXPECT_EQ(m_core.deserializations, 0U);
+
+  // Rewind takes a state of its own, since the client saves one for run-ahead
+  // differently. The first time, the client also loads it back before running
+  // ahead.
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.frames, 2U);
+  EXPECT_EQ(m_core.speculativeFrames, 2U);
+  EXPECT_EQ(m_core.serializations, 3U);
+  EXPECT_EQ(m_core.deserializations, 2U);
+
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.frames, 3U);
+  EXPECT_EQ(m_core.speculativeFrames, 4U);
+  EXPECT_EQ(m_core.deserializations, 3U);
+}
+
+TEST_F(TestGameClientHardwareRendering, RunaheadSharesAnOrdinaryStateWithRewind)
+{
+  RETRO::CPlaybackTestEnvironment environment;
+  CRunaheadSettings runahead(true);
+  m_client->GetInstanceInterface()->toAddon->SerializeSpeculative = nullptr;
+  RETRO::CReversiblePlayback playback(m_client.get(), environment.Renderer(), environment.Streams(),
+                                      environment.Messenger(),
+                                      environment.ProcessInfo().GetDisplayPacing(), 60.0, 0);
+  playback.SetSpeed(1.0);
+
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.serializations, 1U);
+
+  // Rewind reuses the state run-ahead restores to
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.speculativeFrames, 2U);
+  EXPECT_EQ(m_core.serializations, 2U);
+}
+
+TEST_F(TestGameClientHardwareRendering, RunaheadNeedsSpeculativeFrames)
+{
+  RETRO::CPlaybackTestEnvironment environment;
+  CRunaheadSettings runahead(false);
+  m_client->GetInstanceInterface()->toAddon->RunFrameSpeculative = nullptr;
+  RETRO::CReversiblePlayback playback(m_client.get(), environment.Renderer(), environment.Streams(),
+                                      environment.Messenger(),
+                                      environment.ProcessInfo().GetDisplayPacing(), 60.0, 0);
+  playback.SetSpeed(1.0);
+  playback.FrameEvent();
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.frames, 2U);
+  EXPECT_EQ(m_core.deserializations, 0U);
+}
+
+TEST_F(TestGameClientHardwareRendering, RunaheadStopsWhenASpeculativeFrameFails)
+{
+  RETRO::CPlaybackTestEnvironment environment;
+  CRunaheadSettings runahead(false);
+  m_core.speculativeResult = GAME_ERROR_FAILED;
+  RETRO::CReversiblePlayback playback(m_client.get(), environment.Renderer(), environment.Streams(),
+                                      environment.Messenger(),
+                                      environment.ProcessInfo().GetDisplayPacing(), 60.0, 0);
+  playback.SetSpeed(1.0);
+  playback.FrameEvent();
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.speculativeFrames, 1U);
+  EXPECT_EQ(m_core.deserializations, 2U);
+
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.frames, 3U);
+  EXPECT_EQ(m_core.speculativeFrames, 1U);
+  EXPECT_EQ(m_core.deserializations, 2U);
+}
+
+TEST_F(TestGameClientHardwareRendering, RunaheadWaitsWhileTheClientRefusesAState)
+{
+  RETRO::CPlaybackTestEnvironment environment;
+  CRunaheadSettings runahead(false);
+  m_core.refusedStates = 2;
+  RETRO::CReversiblePlayback playback(m_client.get(), environment.Renderer(), environment.Streams(),
+                                      environment.Messenger(),
+                                      environment.ProcessInfo().GetDisplayPacing(), 60.0, 0);
+  playback.SetSpeed(1.0);
+
+  // Frames run as they are, and the client is asked again on each
+  for (int i = 0; i < 4; ++i)
+    playback.FrameEvent();
+  EXPECT_EQ(m_core.frames, 4U);
+  EXPECT_EQ(m_core.serializations, 3U);
+  EXPECT_EQ(m_core.speculativeFrames, 0U);
+  EXPECT_EQ(m_core.deserializations, 0U);
+
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.frames, 5U);
+  EXPECT_EQ(m_core.speculativeFrames, 2U);
+  EXPECT_EQ(m_core.deserializations, 2U);
+}
+
+TEST_F(TestGameClientHardwareRendering, RunaheadStopsWhenTheClientCantRestoreItsState)
+{
+  RETRO::CPlaybackTestEnvironment environment;
+  CRunaheadSettings runahead(false);
+  m_core.deserializeFails = true;
+  RETRO::CReversiblePlayback playback(m_client.get(), environment.Renderer(), environment.Streams(),
+                                      environment.Messenger(),
+                                      environment.ProcessInfo().GetDisplayPacing(), 60.0, 0);
+  playback.SetSpeed(1.0);
+  playback.FrameEvent();
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.speculativeFrames, 0U);
+  EXPECT_EQ(m_core.deserializations, 1U);
+
+  // Found before running ahead, so the game plays on at the real frame
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.frames, 3U);
+  EXPECT_EQ(m_core.speculativeFrames, 0U);
+  EXPECT_EQ(m_core.deserializations, 1U);
+}
+
+TEST_F(TestGameClientHardwareRendering, RunaheadStopsPlaybackWhenTheRealFrameIsLost)
+{
+  RETRO::CPlaybackTestEnvironment environment;
+  CRunaheadSettings runahead(false);
+  m_core.deserializeFailsAhead = true;
+  RETRO::CReversiblePlayback playback(m_client.get(), environment.Renderer(), environment.Streams(),
+                                      environment.Messenger(),
+                                      environment.ProcessInfo().GetDisplayPacing(), 60.0, 0);
+  playback.SetSpeed(1.0);
+  playback.FrameEvent();
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.frames, 2U);
+  EXPECT_EQ(m_core.speculativeFrames, 2U);
+  EXPECT_EQ(m_core.deserializations, 2U);
+
+  // Playing on would continue from a frame that never really happened
+  playback.FrameEvent();
+  playback.SetSpeed(1.0);
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.frames, 2U);
+  EXPECT_EQ(m_core.speculativeFrames, 2U);
+}
+
+TEST_F(TestGameClientHardwareRendering, RunaheadStopsForSoundSentFromAnotherThread)
+{
+  RETRO::CPlaybackTestEnvironment environment;
+  CRunaheadSettings runahead(false);
+  RETRO::CReversiblePlayback playback(m_client.get(), environment.Renderer(), environment.Streams(),
+                                      environment.Messenger(),
+                                      environment.ProcessInfo().GetDisplayPacing(), 60.0, 0);
+  playback.SetSpeed(1.0);
+  RETRO::StreamPtr audio = environment.Streams().CreateStream(RETRO::StreamType::AUDIO);
+  playback.FrameEvent();
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.speculativeFrames, 2U);
+
+  // Sent on the thread running the frames, as most clients do
+  audio->AddStreamData(RETRO::AudioStreamPacket(nullptr, 0));
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.speculativeFrames, 4U);
+
+  std::thread([&audio] { audio->AddStreamData(RETRO::AudioStreamPacket(nullptr, 0)); }).join();
+
+  playback.FrameEvent();
+  EXPECT_EQ(m_core.frames, 4U);
+  EXPECT_EQ(m_core.speculativeFrames, 4U);
+
+  environment.Streams().CloseStream(std::move(audio));
+}
+
+TEST_F(TestGameClientHardwareRendering, DevKitLeavesSpeculativeFramesToNewerKodi)
+{
+  // An 8.5 Kodi's table ends before the entry
+  {
+    DevKitInstance addon(m_client->Streams(), "8.5.0");
+    EXPECT_FALSE(addon.InstalledSpeculativeFrames());
+  }
+  DevKitInstance addon(m_client->Streams(), "8.6.0");
+  EXPECT_TRUE(addon.InstalledSpeculativeFrames());
 }
 
 TEST_F(TestGameClientHardwareRendering, DevKitInstallsHandleBeforeSingleReset)

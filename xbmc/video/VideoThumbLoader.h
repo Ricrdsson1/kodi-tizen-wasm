@@ -14,6 +14,8 @@
 #include "utils/Artwork.h"
 
 #include <map>
+#include <memory>
+#include <set>
 #include <vector>
 
 class CStreamDetails;
@@ -34,6 +36,9 @@ public:
   bool LoadItem(CFileItem* pItem) override;
   bool LoadItemCached(CFileItem* pItem) override;
   bool LoadItemLookup(CFileItem* pItem) override;
+
+  /*! \brief Prefetch art, stream details, ratings, tags and unique ids of a batch for LoadItem(). */
+  void Prefetch(const std::vector<CFileItem*>& items);
 
   /*! \brief Fill the thumb of a video item
    First uses a cached thumb from a previous run, then checks for a local thumb
@@ -72,6 +77,12 @@ public:
    */
   static std::string GetEmbeddedThumbURL(const CFileItem &item);
 
+  /*! \brief Whether a thumb can be extracted from the video GetEmbeddedThumbURL() names
+   \param item a video CFileItem.
+   \return true if a thumb can be extracted, false otherwise.
+   */
+  static bool CanExtractEmbeddedThumb(const CFileItem& item);
+
   /*! \brief helper function to fill the art for a video library item
    \param item a video CFileItem
    \return true if we fill art, false otherwise
@@ -92,4 +103,17 @@ protected:
 
 private:
   int SetDetailsForItem(CVideoInfoTag& details, const KODI::ART::Artwork& artwork);
+
+  /*! \brief Prefetch() the next list batch, unless the item is in one. */
+  void PrefetchFrom(const CFileItem& item);
+
+  /*! \brief Prefetch the art of ids by media type for FillLibraryArt(). */
+  void PrefetchArt(std::map<std::string, std::vector<int>> artIds);
+
+  /*! \brief Get an item's own art, taking it from the art cache when it holds it. */
+  bool GetItemArt(const CVideoInfoTag& tag, KODI::ART::Artwork& artwork);
+
+  size_t m_prefetchEnd{0};
+  std::set<const CFileItem*> m_batched;
+  std::map<const CFileItem*, std::unique_ptr<CVideoInfoTag>> m_prefetched;
 };
