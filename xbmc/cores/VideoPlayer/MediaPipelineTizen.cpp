@@ -299,11 +299,16 @@ bool CMediaPipelineTizen::Available()
   return available;
 }
 
-bool CMediaPipelineTizen::SupportsVideo(const AVCodecID codec)
+bool CMediaPipelineTizen::SupportsVideo(const AVCodecID codec, const int profile)
 {
   switch (codec)
   {
     case AV_CODEC_ID_H264:
+    {
+      // High 10, High 4:2:2, High 4:4:4 and CAVLC 4:4:4, with or without their intra flag
+      const int base = profile == AV_PROFILE_UNKNOWN ? 0 : (profile & 0xff);
+      return base < AV_PROFILE_H264_HIGH_10 && base != AV_PROFILE_H264_CAVLC_444;
+    }
     case AV_CODEC_ID_HEVC:
     case AV_CODEC_ID_VP8:
     case AV_CODEC_ID_VP9:
@@ -365,7 +370,7 @@ bool CMediaPipelineTizen::OpenAudioStream(CDVDStreamInfo hint)
 
 bool CMediaPipelineTizen::OpenVideoStream(CDVDStreamInfo hint)
 {
-  if (!SupportsVideo(hint.codec))
+  if (!SupportsVideo(hint.codec, hint.profile))
   {
     CLog::LogF(LOGERROR, "Unsupported codec: {}", hint.codec);
     return false;

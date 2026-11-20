@@ -28,10 +28,11 @@ void CVideoPlayerTizen::CreatePlayers()
                           [](const auto& stream)
                           {
                             if (stream.codecId != AV_CODEC_ID_NONE)
-                              return CMediaPipelineTizen::SupportsVideo(stream.codecId);
+                              return CMediaPipelineTizen::SupportsVideo(stream.codecId, stream.profile);
                             const AVCodec* codec =
                                 avcodec_find_decoder_by_name(stream.codec.data());
-                            return codec && CMediaPipelineTizen::SupportsVideo(codec->id);
+                            return codec &&
+                                   CMediaPipelineTizen::SupportsVideo(codec->id, stream.profile);
                           });
 
   if (canTizen)

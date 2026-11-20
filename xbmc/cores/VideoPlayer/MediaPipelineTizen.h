@@ -60,7 +60,10 @@ public:
    */
   static bool Available();
 
-  static bool SupportsVideo(AVCodecID codec);
+  /*!
+   * \brief Whether the TV decodes this video. Its H.264 decoder takes 8-bit 4:2:0 only.
+   */
+  static bool SupportsVideo(AVCodecID codec, int profile);
   static bool SupportsAudio(AVCodecID codec);
 
   void FlushVideoMessages();
