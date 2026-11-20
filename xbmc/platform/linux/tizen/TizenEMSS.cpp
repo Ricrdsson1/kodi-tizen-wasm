@@ -171,6 +171,13 @@ struct EsPlusPlayer
       CLog::Log(LOGERROR, "ESPlayer: {}", dlerror());
       return false;
     }
+    // Older TVs (Tizen 6) run apps with G_DEBUG=fatal-criticals, and their player warns on
+    // every start: of a missing program name and of the subtitle track it sets up. Only GLib's
+    // errors end the process then.
+    using SetAlwaysFatal = int (*)(int);
+    if (const auto setAlwaysFatal =
+            reinterpret_cast<SetAlwaysFatal>(dlsym(RTLD_DEFAULT, "g_log_set_always_fatal")))
+      setAlwaysFatal(0);
     bool ok = true;
     auto get = [&](auto& fn, const char* name)
     {
